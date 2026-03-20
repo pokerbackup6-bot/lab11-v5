@@ -1,0 +1,1 @@
+// Arquivo removido em favor de components/Sidebar.tsx
