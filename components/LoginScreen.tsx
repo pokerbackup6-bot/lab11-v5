@@ -4,7 +4,7 @@ import { supabase } from '../utils/supabase.ts';
 import { supabaseAdmin } from '../utils/supabaseAdmin.ts';
 
 interface LoginScreenProps {
-  onLogin: (email: string, isAdmin: boolean, isActive: boolean) => void;
+  onLogin: (email: string, userId: string, isAdmin: boolean, isActive: boolean) => void;
   onGoToRegister: () => void;
 }
 
@@ -46,7 +46,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onGoToRegister }) =>
     const isAdmin  = profile?.is_admin  ?? false;
     const isActive = profile?.is_active ?? false;
 
-    onLogin(data.user.email!, isAdmin, isActive);
+    onLogin(data.user.email!, data.user.id, isAdmin, isActive);
     setLoading(false);
   };
 

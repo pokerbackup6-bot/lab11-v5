@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { ArrowLeft, History, ChevronDown, ChevronUp, CheckCircle, XCircle, Clock, Target, TrendingUp, TrendingDown, Minus, AlertTriangle } from 'lucide-react';
+import { supabase } from '../utils/supabase.ts';
 
 const SESSION_HISTORY_KEY = 'lab11_session_history';
 
@@ -97,10 +98,72 @@ const Sparkline: React.FC<{ data: number[] }> = ({ data }) => {
 const HistoryScreen: React.FC<HistoryScreenProps> = ({ currentUser, onBack }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'performance' | 'historico'>('performance');
+  const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const sessions = useMemo((): SessionRecord[] => {
-    const all: Record<string, SessionRecord[]> = JSON.parse(localStorage.getItem(SESSION_HISTORY_KEY) || '{}');
-    return (all[currentUser] || []).slice().reverse();
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        // Buscar do Supabase
+        const { data, error } = await supabase
+          .from('hand_history')
+          .select('training_session_id, scenario_name, is_correct, is_timeout, user_action, correct_action, hero_cards, hand_key, played_at')
+          .order('played_at', { ascending: true });
+
+        if (!error && data && data.length > 0) {
+          // Agrupar por training_session_id
+          const sessionMap = new Map<string, typeof data>();
+          data.forEach(row => {
+            const sid = row.training_session_id || `legacy_${row.played_at}`;
+            if (!sessionMap.has(sid)) sessionMap.set(sid, []);
+            sessionMap.get(sid)!.push(row);
+          });
+
+          const built: SessionRecord[] = [];
+          sessionMap.forEach((hands, sid) => {
+            const totalHands = hands.length;
+            const correctHands = hands.filter(h => h.is_correct).length;
+            const wrongHands: WrongHand[] = hands
+              .filter(h => !h.is_correct)
+              .map(h => ({
+                hand: (h.hero_cards as string[] | null)?.join(' ') || h.hand_key || '??',
+                action: h.user_action,
+                correctAction: h.correct_action,
+                isTimeout: h.is_timeout,
+              }));
+            const firstDate = hands[0].played_at;
+            const lastDate = hands[hands.length - 1].played_at;
+            const durationSeconds = Math.round(
+              (new Date(lastDate).getTime() - new Date(firstDate).getTime()) / 1000
+            );
+            built.push({
+              id: sid,
+              email: currentUser,
+              scenarioName: hands[0].scenario_name || 'Treino',
+              date: firstDate,
+              totalHands,
+              correctHands,
+              durationSeconds: Math.max(durationSeconds, 0),
+              wrongHands,
+            });
+          });
+
+          // Mais recente primeiro
+          built.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          setSessions(built);
+          return;
+        }
+      } catch {
+        // Fallback abaixo
+      }
+
+      // Fallback: localStorage
+      const all: Record<string, SessionRecord[]> = JSON.parse(localStorage.getItem(SESSION_HISTORY_KEY) || '{}');
+      setSessions((all[currentUser] || []).slice().reverse());
+    };
+
+    load().finally(() => setLoading(false));
   }, [currentUser]);
 
   const perf = useMemo(() => {
@@ -241,7 +304,12 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ currentUser, onBack }) =>
         ))}
       </div>
 
-      {sessions.length === 0 ? (
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-24 gap-4">
+          <div className="w-6 h-6 border-2 border-sky-400/30 border-t-sky-400 rounded-full animate-spin" />
+          <p className="text-gray-700 text-[10px] uppercase tracking-widest font-black">Carregando...</p>
+        </div>
+      ) : sessions.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 gap-4">
           <History className="w-12 h-12 text-gray-800" />
           <p className="text-gray-600 text-[11px] font-black uppercase tracking-widest text-center">

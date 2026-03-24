@@ -436,6 +436,8 @@ const App: React.FC = () => {
   const handPoolRef = useRef<any[]>([]);
   const recentHandKeysRef = useRef<string[]>([]);
   const trainingGoalRef = useRef<TrainingGoal | null>(null);
+  const currentUserIdRef = useRef<string>('');
+  const trainingSessionIdRef = useRef<string>('');
   useEffect(() => { trainingGoalRef.current = trainingGoal; }, [trainingGoal]);
   const statsSavedRef = useRef(false);
   const [showStopModal, setShowStopModal] = useState(false);
@@ -488,6 +490,7 @@ const App: React.FC = () => {
           .eq('id', session.user.id)
           .single();
         setCurrentUser(session.user.email!);
+        currentUserIdRef.current = session.user.id;
         setIsAdmin(profile?.is_admin ?? false);
         setIsActive(profile?.is_active ?? false);
         setIsAuthenticated(true);
@@ -848,6 +851,25 @@ const App: React.FC = () => {
       isTimeout: isTimeout
     };
     setHandHistory(prev => [...prev, newHand]);
+
+    // Salvar no banco (fire-and-forget)
+    if (currentUserIdRef.current) {
+      supabase.from('hand_history').insert({
+        user_id:             currentUserIdRef.current,
+        scenario_id:         activeScenario.id ?? null,
+        scenario_name:       activeScenario.name ?? null,
+        training_session_id: trainingSessionIdRef.current || null,
+        hand_key:            handKey,
+        hero_cards:          hero.cards ?? [],
+        user_action:         isTimeout ? 'TIMEOUT' : label,
+        correct_action:      correctAction,
+        is_correct:          isCorrect,
+        is_timeout:          isTimeout,
+        correct_freq:        clickedFreq,
+      }).then(({ error }) => {
+        if (error) console.warn('[hand_history] Erro ao salvar:', error.message);
+      });
+    }
     
     if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current);
     resetTimerRef.current = window.setTimeout(() => {
@@ -875,9 +897,10 @@ const App: React.FC = () => {
     return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
   }, [timeBankSetting, feedback, timeRemaining, handleActionClick]);
 
-  const handleLogin = (email: string, isAdminFlag: boolean, isActiveFlag: boolean) => {
+  const handleLogin = (email: string, userId: string, isAdminFlag: boolean, isActiveFlag: boolean) => {
     setMultiLoginError(false);
     setCurrentUser(email);
+    currentUserIdRef.current = userId;
     setIsAdmin(isAdminFlag);
     setIsActive(isActiveFlag);
     setIsAuthenticated(true);
@@ -908,6 +931,7 @@ const App: React.FC = () => {
     setHandHistory([]);
     handPoolRef.current = [];
     recentHandKeysRef.current = [];
+    trainingSessionIdRef.current = crypto.randomUUID();
     setSessionElapsedSeconds(0);
     statsSavedRef.current = false;
   };
