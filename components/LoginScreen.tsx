@@ -4,7 +4,7 @@ import { supabase } from '../utils/supabase.ts';
 import { supabaseAdmin } from '../utils/supabaseAdmin.ts';
 
 interface LoginScreenProps {
-  onLogin: (email: string, isAdmin: boolean) => void;
+  onLogin: (email: string, isAdmin: boolean, isActive: boolean) => void;
   onGoToRegister: () => void;
 }
 
@@ -36,14 +36,17 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onGoToRegister }) =>
       return;
     }
 
-    // Buscar perfil para saber se é admin (via admin client para bypassar RLS)
+    // Buscar perfil para saber se é admin e se tem acesso ativo
     const { data: profile } = await supabaseAdmin
       .from('profiles')
-      .select('is_admin')
+      .select('is_admin, is_active')
       .eq('id', data.user.id)
       .single();
 
-    onLogin(data.user.email!, profile?.is_admin ?? false);
+    const isAdmin  = profile?.is_admin  ?? false;
+    const isActive = profile?.is_active ?? false;
+
+    onLogin(data.user.email!, isAdmin, isActive);
     setLoading(false);
   };
 

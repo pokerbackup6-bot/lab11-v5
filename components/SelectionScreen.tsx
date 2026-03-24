@@ -103,7 +103,7 @@ const SelectionScreen: React.FC<SelectionScreenProps> = ({ scenarios, onSelect, 
   const hasActiveFilters = filterStreet !== 'ALL' || filterStack !== 'ALL' || filterSpot !== 'ALL' || filterPlayers !== 'ALL' || filterPos !== 'ALL' || searchQuery !== '' || showOnlyFavorites;
 
   return (
-    <div className="w-full bg-[#050505] text-white p-4 md:p-8">
+    <div className="w-full bg-[#050505] text-white p-4 md:p-8 pb-24 md:pb-8">
       <div className="max-w-7xl mx-auto w-full">
         
         {/* Header */}

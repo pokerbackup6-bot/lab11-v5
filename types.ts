@@ -83,7 +83,10 @@ export interface User {
 
 export type TrainingGoalType = 'hands' | 'time' | 'free';
 
+export type TrainingMode = 'normal' | 'close';
+
 export interface TrainingGoal {
   type: TrainingGoalType;
   value: number; // Quantidade de mãos ou minutos
+  mode: TrainingMode;
 }

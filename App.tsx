@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Player, PlayerStatus, TimeBankOption, HandRecord, Scenario, User, TrainingGoal, RangeData } from './types.ts';
+import { Player, PlayerStatus, TimeBankOption, HandRecord, Scenario, User, TrainingGoal, RangeData, TrainingMode } from './types.ts';
+import { buildHandPool } from './utils/pokerUtils.ts';
 import { SYSTEM_DEFAULT_SCENARIOS } from './defaultScenarios.ts';
 import PlayerSeat from './components/PlayerSeat.tsx';
 import Sidebar from './components/Sidebar.tsx';
@@ -366,6 +367,7 @@ const SupportButton = () => (
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isActive, setIsActive] = useState(false);
   const [authView, setAuthView] = useState<'login' | 'register'>('login');
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -432,6 +434,9 @@ const App: React.FC = () => {
   
   const [handHistory, setHandHistory] = useState<HandRecord[]>([]);
   const handPoolRef = useRef<any[]>([]);
+  const recentHandKeysRef = useRef<string[]>([]);
+  const trainingGoalRef = useRef<TrainingGoal | null>(null);
+  useEffect(() => { trainingGoalRef.current = trainingGoal; }, [trainingGoal]);
   const statsSavedRef = useRef(false);
   const [showStopModal, setShowStopModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -479,11 +484,12 @@ const App: React.FC = () => {
       if (session?.user) {
         const { data: profile } = await supabaseAdmin
           .from('profiles')
-          .select('is_admin')
+          .select('is_admin, is_active')
           .eq('id', session.user.id)
           .single();
         setCurrentUser(session.user.email!);
         setIsAdmin(profile?.is_admin ?? false);
+        setIsActive(profile?.is_active ?? false);
         setIsAuthenticated(true);
         fetchScenarios();
       }
@@ -494,6 +500,7 @@ const App: React.FC = () => {
         setIsAuthenticated(false);
         setCurrentUser(null);
         setIsAdmin(false);
+        setIsActive(false);
         setCurrentView('selection');
         setAuthView('login');
       }
@@ -529,25 +536,10 @@ const App: React.FC = () => {
   const resetToNewHand = useCallback(() => {
     if (!activeScenario) return;
 
-    // Se o pool estiver vazio, populamos com todas as mãos de todas as variantes (ou do cenário base)
+    // Se o pool estiver vazio, reconstruímos com shuffle estratificado + cobertura de ações
     if (handPoolRef.current.length === 0) {
-      let newPool: any[] = [];
-      
-      if (activeScenario.variants && activeScenario.variants.length > 0) {
-        // Para cada variante, pegamos suas mãos ativas e guardamos a referência da variante
-        activeScenario.variants.forEach(variant => {
-          const activeHands = getActiveHandsFromRange(variant.ranges);
-          activeHands.forEach(handKey => {
-            newPool.push({ variantId: variant.id, handKey });
-          });
-        });
-      } else {
-        // Cenário sem variantes (Pre-flop ou Post-flop simples)
-        const activeHands = getActiveHandsFromRange(activeScenario.ranges);
-        activeHands.forEach(handKey => {
-          newPool.push({ handKey });
-        });
-      }
+      const mode: TrainingMode = trainingGoalRef.current?.mode ?? 'normal';
+      const newPool = buildHandPool(activeScenario, mode, recentHandKeysRef.current);
 
       if (newPool.length === 0) {
         console.error("Cenário sem mãos ativas:", activeScenario.name);
@@ -555,11 +547,6 @@ const App: React.FC = () => {
         return;
       }
 
-      // Embaralha o pool
-      for (let i = newPool.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [newPool[i], newPool[j]] = [newPool[j], newPool[i]];
-      }
       handPoolRef.current = newPool;
     }
 
@@ -572,6 +559,9 @@ const App: React.FC = () => {
     }
 
     let { variantId, handKey } = nextItem;
+
+    // Track recent keys (last 3) for anti-repeat at next cycle boundary
+    recentHandKeysRef.current = [...recentHandKeysRef.current.slice(-2), handKey];
 
     let effectiveBoard = activeScenario.board || [];
     let effectiveRanges = activeScenario.ranges;
@@ -885,10 +875,11 @@ const App: React.FC = () => {
     return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
   }, [timeBankSetting, feedback, timeRemaining, handleActionClick]);
 
-  const handleLogin = (email: string, isAdminFlag: boolean) => {
+  const handleLogin = (email: string, isAdminFlag: boolean, isActiveFlag: boolean) => {
     setMultiLoginError(false);
     setCurrentUser(email);
     setIsAdmin(isAdminFlag);
+    setIsActive(isActiveFlag);
     setIsAuthenticated(true);
     fetchScenarios();
   };
@@ -898,6 +889,7 @@ const App: React.FC = () => {
     setIsAuthenticated(false);
     setCurrentUser(null);
     setIsAdmin(false);
+    setIsActive(false);
     setCurrentView('selection');
     setAuthView('login');
   };
@@ -911,9 +903,11 @@ const App: React.FC = () => {
   };
   const handleStartTraining = (goal: TrainingGoal) => {
     setTrainingGoal(goal);
+    trainingGoalRef.current = goal;
     setCurrentView('trainer');
     setHandHistory([]);
     handPoolRef.current = [];
+    recentHandKeysRef.current = [];
     setSessionElapsedSeconds(0);
     statsSavedRef.current = false;
   };
@@ -1071,7 +1065,7 @@ const App: React.FC = () => {
   const getMobilePlayerStyle = (index: number, totalSlots: number) => {
     if (totalSlots === 9) {
       const positions = [
-        { x: 50, y: 88 },   // 0: Bottom
+        { x: 50, y: 80 },   // 0: Bottom
         { x: 18, y: 80 },   // 1
         { x: 10, y: 58 },   // 2
         { x: 10, y: 34 },   // 3
@@ -1084,7 +1078,7 @@ const App: React.FC = () => {
       return { top: `${positions[index].y}%`, left: `${positions[index].x}%`, transform: 'translate(-50%, -50%)' };
     } else if (totalSlots === 6) {
       const positions = [
-        { x: 50, y: 88 },
+        { x: 50, y: 80 },
         { x: 15, y: 68 },
         { x: 15, y: 30 },
         { x: 50, y: 10 },
@@ -1094,14 +1088,14 @@ const App: React.FC = () => {
       return { top: `${positions[index].y}%`, left: `${positions[index].x}%`, transform: 'translate(-50%, -50%)' };
     } else if (totalSlots === 4) {
       const positions = [
-        { x: 50, y: 88 },
+        { x: 50, y: 80 },
         { x: 14, y: 49 },
         { x: 50, y: 10 },
         { x: 86, y: 49 },
       ];
       return { top: `${positions[index].y}%`, left: `${positions[index].x}%`, transform: 'translate(-50%, -50%)' };
     } else if (totalSlots === 2) {
-      return { top: index === 0 ? '88%' : '10%', left: '50%', transform: 'translate(-50%, -50%)' };
+      return { top: index === 0 ? '80%' : '10%', left: '50%', transform: 'translate(-50%, -50%)' };
     }
 
     const startAngle = 270; const angleStep = 360 / totalSlots; const angleInDegrees = startAngle - (index * angleStep);
@@ -1199,9 +1193,44 @@ const App: React.FC = () => {
     }
     return (
       <>
-        <RegisterScreen onRegister={(e) => handleLogin(e, false)} onGoToLogin={() => setAuthView('login')} />
+        <RegisterScreen onRegister={(e) => handleLogin(e, false, false)} onGoToLogin={() => setAuthView('login')} />
         <SupportButton />
       </>
+    );
+  }
+
+  // Access gate: active subscription required (admins always bypass)
+  if (!isAdmin && !isActive) {
+    return (
+      <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6 animate-in fade-in duration-700">
+        <div className="w-full max-w-md text-center">
+          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-red-400">
+              <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+            </svg>
+          </div>
+          <h1 className="text-2xl font-black text-white tracking-tighter uppercase mb-2">Acesso não liberado</h1>
+          <p className="text-gray-500 text-sm mb-8 leading-relaxed">
+            Sua conta ainda não possui uma assinatura ativa.<br/>
+            Adquira o LAB11 para continuar.
+          </p>
+          <a
+            href="https://cakto.com.br"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block px-8 py-4 bg-sky-600 hover:bg-sky-500 text-white font-black text-[11px] uppercase tracking-widest rounded-2xl transition-all shadow-2xl shadow-sky-500/20 mb-4"
+          >
+            Adquirir Acesso
+          </a>
+          <br/>
+          <button
+            onClick={handleLogout}
+            className="text-[10px] text-gray-600 hover:text-gray-400 font-black uppercase tracking-widest transition-colors mt-2"
+          >
+            Sair
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -1229,32 +1258,32 @@ const App: React.FC = () => {
   );
 
   if (currentView === 'selection') return (
-    <div className="w-full min-h-screen overflow-y-auto bg-[#050505]">
+    <div className="w-full h-screen overflow-y-auto bg-[#050505]">
       <SelectionScreen scenarios={scenarios} onSelect={onSelectScenario} onCreateNew={handleCreateNew} isAdmin={isAdmin} />
       <ScenarioCreatorModal isOpen={showScenarioCreatorModal} scenarios={scenarios} onClose={() => setShowScenarioCreatorModal(false)} onSave={handleSaveScenario} onDelete={handleDeleteScenario} isAdmin={isAdmin} />
       <AdminMemberModal isOpen={showAdminMemberModal} onClose={() => setShowAdminMemberModal(false)} />
-      <div className="fixed top-8 right-8 flex gap-3 z-[100]">
-        {isAdmin && (
+      <div className={`fixed z-[100] ${isMobile ? 'bottom-0 left-0 right-0 flex justify-center gap-2 p-3 bg-gradient-to-t from-[#050505] to-transparent' : 'top-8 right-8 flex gap-3'}`}>
+        {isAdmin && !isMobile && (
           <button onClick={handleCreateNew} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 border border-emerald-400/40 rounded-xl text-[10px] font-black uppercase tracking-widest text-white transition-all flex items-center gap-2">
             <span>+</span> Criar Cenário
           </button>
         )}
-        {isAdmin && (
+        {isAdmin && !isMobile && (
           <button onClick={() => setCurrentView('admin')} className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all">
             ADMIN
           </button>
         )}
-        <button onClick={() => setCurrentView('ranking')} className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all flex items-center gap-1.5">
-          🏆 Ranking
+        <button onClick={() => setCurrentView('ranking')} className={`${isMobile ? 'flex-1 py-2.5' : 'px-4 py-2'} bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all flex items-center justify-center gap-1.5`}>
+          🏆 {isMobile ? '' : 'Ranking'}
         </button>
-        <button onClick={() => setCurrentView('history')} className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all">
-          Histórico
+        <button onClick={() => setCurrentView('history')} className={`${isMobile ? 'flex-1 py-2.5' : 'px-4 py-2'} bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all`}>
+          {isMobile ? '📊' : 'Histórico'}
         </button>
-        <button onClick={() => setCurrentView('profile')} className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all">
-          Perfil
+        <button onClick={() => setCurrentView('profile')} className={`${isMobile ? 'flex-1 py-2.5' : 'px-4 py-2'} bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all`}>
+          {isMobile ? '👤' : 'Perfil'}
         </button>
-        <button onClick={handleLogout} className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white transition-all">
-          Sair
+        <button onClick={handleLogout} className={`${isMobile ? 'flex-1 py-2.5' : 'px-4 py-2'} bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white transition-all`}>
+          {isMobile ? '↩' : 'Sair'}
         </button>
       </div>
       <SupportButton />
@@ -1317,8 +1346,8 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
-      <div className={`flex-1 relative flex flex-col items-center justify-center transition-all duration-300 ${!isMobile && sidebarOpen && !isFocusMode ? 'ml-80' : 'ml-0'}`}>
-        <div className={`relative w-full ${isMobile ? 'max-w-[450px] aspect-[9/13.5] mt-[-40px]' : 'max-w-[800px] aspect-[16/10]'} flex flex-col items-center justify-center select-none transition-all duration-500`}>
+      <div className={`flex-1 relative flex flex-col items-center justify-center transition-all duration-300 ${!isMobile && sidebarOpen && !isFocusMode ? 'ml-80' : 'ml-0'} ${isMobile ? 'pb-[100px]' : ''}`}>
+        <div className={`relative w-full ${isMobile ? 'max-w-[400px] aspect-[9/13]' : 'max-w-[800px] aspect-[16/10]'} flex flex-col items-center justify-center select-none transition-all duration-500`}>
           <div
             className={`absolute inset-0 ${isMobile ? 'm-8 rounded-[110px]' : 'm-16 rounded-[120px]'}${tableStyle === 'classic' ? ' border-[8px] border-[#111111] shadow-[0_20px_60px_-15px_rgba(0,0,0,1)] bg-[#080808]' : ''}`}
             style={tableStyle === 'premium' ? {
@@ -1399,7 +1428,7 @@ const App: React.FC = () => {
               </div>
             ))}
           </div>
-          <div className={`absolute ${isMobile ? 'bottom-[-60px]' : 'bottom-[-110px]'} w-full flex justify-center z-50 px-4`}>
+          <div className={`${isMobile ? 'fixed bottom-0 left-0 right-0 pb-4 pt-3 bg-gradient-to-t from-[#050505] via-[#050505]/80 to-transparent' : 'absolute bottom-[-110px] w-full'} flex justify-center z-50 px-4`}>
              {feedback !== 'idle' ? (
                feedback === 'correct' ? (
                  <div className="py-3 px-6 rounded-full border font-black uppercase text-xs tracking-widest animate-in zoom-in duration-300 bg-green-600/20 border-green-500 text-green-400 shadow-[0_0_15px_rgba(34,197,94,0.3)] flex items-center gap-3">

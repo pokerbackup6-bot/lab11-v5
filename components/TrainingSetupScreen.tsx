@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { TrainingGoal, TrainingGoalType } from '../types.ts';
+import { TrainingGoal, TrainingGoalType, TrainingMode } from '../types.ts';
 
 interface TrainingSetupScreenProps {
   scenarioName: string;
@@ -11,11 +11,13 @@ const TrainingSetupScreen: React.FC<TrainingSetupScreenProps> = ({ scenarioName,
   const [goalType, setGoalType] = useState<TrainingGoalType>('hands');
   const [handsValue, setHandsValue] = useState<number>(100);
   const [timeValue, setTimeValue] = useState<number>(20);
+  const [trainingMode, setTrainingMode] = useState<TrainingMode>('normal');
 
   const handleStart = () => {
     onStart({
       type: goalType,
-      value: goalType === 'hands' ? handsValue : (goalType === 'time' ? timeValue : 0)
+      value: goalType === 'hands' ? handsValue : (goalType === 'time' ? timeValue : 0),
+      mode: trainingMode,
     });
   };
 
@@ -134,7 +136,28 @@ const TrainingSetupScreen: React.FC<TrainingSetupScreenProps> = ({ scenarioName,
           </div>
         )}
 
-        <div className="mt-8 md:mt-10 flex flex-col md:flex-row gap-3 md:gap-4">
+        {/* Nível de Dificuldade */}
+        <div className="mt-8 md:mt-10">
+          <p className="text-[9px] md:text-[10px] text-gray-500 font-black uppercase tracking-[0.3em] mb-3">Nível de Dificuldade</p>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={() => setTrainingMode('normal')}
+              className={`p-4 rounded-2xl border transition-all text-left ${trainingMode === 'normal' ? 'bg-white/10 border-white/30' : 'bg-white/5 border-white/5 hover:bg-white/8'}`}
+            >
+              <p className={`text-[10px] md:text-[11px] font-black uppercase tracking-widest mb-1 ${trainingMode === 'normal' ? 'text-white' : 'text-gray-500'}`}>Normal</p>
+              <p className="text-[8px] md:text-[9px] text-gray-500 font-bold leading-tight">Todas as mãos do range</p>
+            </button>
+            <button
+              onClick={() => setTrainingMode('close')}
+              className={`p-4 rounded-2xl border transition-all text-left ${trainingMode === 'close' ? 'bg-amber-500/10 border-amber-500/40' : 'bg-white/5 border-white/5 hover:bg-white/8'}`}
+            >
+              <p className={`text-[10px] md:text-[11px] font-black uppercase tracking-widest mb-1 ${trainingMode === 'close' ? 'text-amber-400' : 'text-gray-500'}`}>Decisões Difíceis</p>
+              <p className="text-[8px] md:text-[9px] text-gray-500 font-bold leading-tight">Mãos na borda do range com estratégia mista</p>
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-6 md:mt-8 flex flex-col md:flex-row gap-3 md:gap-4">
           <button 
             onClick={onBack}
             className="order-2 md:order-1 flex-1 py-4 md:py-5 bg-white/5 border border-white/10 rounded-2xl text-[10px] md:text-[11px] font-black uppercase tracking-[0.2em] text-gray-500 hover:text-white transition-all"
