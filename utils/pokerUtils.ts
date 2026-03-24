@@ -92,7 +92,7 @@ export const getDominantAction = (handKey: string, ranges: RangeData): string =>
   return entries[0]?.[0] ?? 'Fold';
 };
 
-// A "close decision" hand has a dominant action with ≤80% frequency share (mixed strategy / edge of range)
+// A "close decision" hand has a dominant action with ≤80% frequency share (mixed strategy)
 export const isCloseDecision = (handKey: string, ranges: RangeData): boolean => {
   const actionMap = ranges[handKey];
   if (!actionMap) return false;
@@ -101,6 +101,65 @@ export const isCloseDecision = (handKey: string, ranges: RangeData): boolean => 
   if (total === 0) return false;
   const max = Math.max(...values);
   return max / total <= 0.80;
+};
+
+// Detects hands near the boundary where the dominant action changes within a hand family.
+// Example: in RFI BTN, K6o=Raise and K5o=Fold → both are border hands, as are the 2
+// hands on each side (K8o, K7o, K4o, K3o with radius=3).
+// Only hands that exist in the range are returned.
+const RANKS_DESC_LOCAL = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2'];
+
+export const getBorderHands = (ranges: RangeData, radius = 3): Set<string> => {
+  const result = new Set<string>();
+
+  // Dominant action for a key; '__none__' if absent or all-zero
+  const dom = (key: string): string => {
+    const m = ranges[key];
+    if (!m) return '__none__';
+    const entries = Object.entries(m) as [string, number][];
+    const total = entries.reduce((s, [, v]) => s + v, 0);
+    if (total === 0) return '__none__';
+    return entries.sort((a, b) => b[1] - a[1])[0][0];
+  };
+
+  // Mark `radius` hands on each side of a border at position borderIdx
+  const markBorder = (family: string[], borderIdx: number) => {
+    const lo = Math.max(0, borderIdx - radius + 1);
+    const hi = Math.min(family.length - 1, borderIdx + radius);
+    for (let k = lo; k <= hi; k++) {
+      if (ranges[family[k]]) result.add(family[k]);
+    }
+  };
+
+  const findBorders = (family: string[]) => {
+    for (let k = 0; k < family.length - 1; k++) {
+      const da = dom(family[k]);
+      const db = dom(family[k + 1]);
+      if (da !== '__none__' && db !== '__none__' && da !== db) {
+        markBorder(family, k);
+      }
+    }
+  };
+
+  // Suited and offsuit families: high card H + kickers (ordered strongest → weakest)
+  for (let i = 0; i < RANKS_DESC_LOCAL.length; i++) {
+    const H = RANKS_DESC_LOCAL[i];
+    if (i < RANKS_DESC_LOCAL.length - 1) {
+      const suited: string[] = [];
+      const offsuit: string[] = [];
+      for (let j = i + 1; j < RANKS_DESC_LOCAL.length; j++) {
+        suited.push(H + RANKS_DESC_LOCAL[j] + 's');
+        offsuit.push(H + RANKS_DESC_LOCAL[j] + 'o');
+      }
+      findBorders(suited);
+      findBorders(offsuit);
+    }
+  }
+
+  // Pairs: AA → 22
+  findBorders(RANKS_DESC_LOCAL.map(r => r + r));
+
+  return result;
 };
 
 export interface PoolItem {
@@ -141,9 +200,21 @@ export const buildHandPool = (
 
   if (allItems.length === 0) return [];
 
-  // 2. Filter for close decisions mode (mixed strategy hands only)
+  // 2. Filter for close decisions mode:
+  //    - mixed strategy hands (dominant action ≤ 80% frequency)
+  //    - border hands (near where the dominant action changes within a hand family)
   if (mode === 'close') {
-    const closeItems = allItems.filter(item => isCloseDecision(item.handKey, item.ranges));
+    // Pre-compute border sets keyed by ranges object reference (one per variant / main ranges)
+    const borderCache = new Map<RangeData, Set<string>>();
+    const borders = (ranges: RangeData): Set<string> => {
+      if (!borderCache.has(ranges)) borderCache.set(ranges, getBorderHands(ranges));
+      return borderCache.get(ranges)!;
+    };
+
+    const closeItems = allItems.filter(item =>
+      isCloseDecision(item.handKey, item.ranges) || borders(item.ranges).has(item.handKey)
+    );
+
     if (closeItems.length >= 3) allItems = closeItems;
   }
 
