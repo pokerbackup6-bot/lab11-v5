@@ -116,8 +116,8 @@ const fisherYates = <T>(arr: T[]): T[] => {
   return arr;
 };
 
-// Builds a hand pool with stratified shuffle (interleaved by dominant action)
-// and anti-repeat: recentKeys are moved to the end of the pool.
+// Builds a randomised hand pool from the scenario's configured hands.
+// Anti-repeat: recently-seen hands are pushed to the end of each new cycle.
 export const buildHandPool = (
   scenario: Scenario,
   mode: TrainingMode,
@@ -147,37 +147,68 @@ export const buildHandPool = (
     if (closeItems.length >= 3) allItems = closeItems;
   }
 
-  // 3. Group by dominant action
+  // 3. Group by dominant action and shuffle within each group
   const groups = new Map<string, PoolItemWithRanges[]>();
   allItems.forEach(item => {
     const action = getDominantAction(item.handKey, item.ranges);
     if (!groups.has(action)) groups.set(action, []);
     groups.get(action)!.push(item);
   });
+  groups.forEach(g => fisherYates(g));
 
-  // 4. Shuffle within each group
-  groups.forEach(group => fisherYates(group));
+  // 4. Weighted random selection with consecutive-repeat penalty.
+  //    Pure Fisher-Yates on a balanced pool produces alternating sequences
+  //    by chance. Here we weight each action by its remaining count but
+  //    divide that weight by 2 after 1 consecutive repeat, and by 6 after
+  //    2+ consecutive repeats, forcing natural run variation:
+  //    R, R, F, R, F, F, F, R, R, F, ... — no fixed pattern.
+  const queues = [...groups.entries()].map(([action, items]) => ({ action, items }));
+  const result: PoolItem[] = [];
+  let lastAction = '';
+  let consecutive = 0;
 
-  // 5. Interleave groups via round-robin for balanced action coverage
-  const queues = [...groups.values()];
-  const interleaved: PoolItem[] = [];
-  while (queues.some(q => q.length > 0)) {
-    for (const q of queues) {
-      if (q.length > 0) {
-        const { ranges: _r, ...item } = q.shift()!;
-        interleaved.push(item);
+  while (queues.some(q => q.items.length > 0)) {
+    const available = queues.filter(q => q.items.length > 0);
+
+    // Compute weights — penalise the last-used action
+    const weights = available.map(q => {
+      let w = q.items.length;
+      if (q.action === lastAction) {
+        w = consecutive >= 2
+          ? Math.max(1, Math.floor(w / 6))   // strong penalty after 2+ in a row
+          : Math.max(1, Math.floor(w / 2));   // mild penalty after 1 in a row
       }
+      return w;
+    });
+
+    // Pick one queue at random, weighted
+    const total = weights.reduce((s, w) => s + w, 0);
+    let r = Math.random() * total;
+    let chosenIdx = available.length - 1;
+    for (let i = 0; i < weights.length; i++) {
+      r -= weights[i];
+      if (r <= 0) { chosenIdx = i; break; }
+    }
+
+    const chosen = available[chosenIdx];
+    const { ranges: _r, ...item } = chosen.items.shift()!;
+    result.push(item);
+
+    if (chosen.action === lastAction) {
+      consecutive++;
+    } else {
+      lastAction = chosen.action;
+      consecutive = 1;
     }
   }
 
-  // 6. Anti-repeat at cycle boundary: move recently-seen hands to the END
-  // (pool is consumed via shift(), so END = consumed last)
+  // 5. Anti-repeat at cycle boundary: move recently-seen hands to the END
   if (recentKeys.length > 0) {
     const recentSet = new Set(recentKeys);
-    const front = interleaved.filter(item => !recentSet.has(item.handKey));
-    const back  = interleaved.filter(item =>  recentSet.has(item.handKey));
-    return [...front, ...back]; // shift() consumes front first, back last ✓
+    const front = result.filter(item => !recentSet.has(item.handKey));
+    const back  = result.filter(item =>  recentSet.has(item.handKey));
+    return [...front, ...back];
   }
 
-  return interleaved;
+  return result;
 };
