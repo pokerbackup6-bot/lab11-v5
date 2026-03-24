@@ -83,23 +83,6 @@ export const getActiveHandsFromRange = (ranges: RangeData): string[] => {
   });
 };
 
-// Generates all 169 standard preflop hand keys (AA, AKs, AKo, ..., 32o)
-const RANKS_DESC = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2'];
-export const generateAll169Hands = (): string[] => {
-  const hands: string[] = [];
-  for (let i = 0; i < RANKS_DESC.length; i++) {
-    for (let j = 0; j <= i; j++) {
-      if (i === j) {
-        hands.push(RANKS_DESC[i] + RANKS_DESC[j]); // pair: AA, KK, ...
-      } else {
-        hands.push(RANKS_DESC[j] + RANKS_DESC[i] + 's'); // suited: AKs, ...
-        hands.push(RANKS_DESC[j] + RANKS_DESC[i] + 'o'); // offsuit: AKo, ...
-      }
-    }
-  }
-  return hands;
-};
-
 // Returns the action with the highest frequency for a given hand key
 export const getDominantAction = (handKey: string, ranges: RangeData): string => {
   const actionMap = ranges[handKey];
@@ -140,11 +123,9 @@ export const buildHandPool = (
   mode: TrainingMode,
   recentKeys: string[]
 ): PoolItem[] => {
-  // 1. Collect all active items
+  // 1. Collect all active items (only hands explicitly configured in the scenario)
   type PoolItemWithRanges = PoolItem & { ranges: RangeData };
   let allItems: PoolItemWithRanges[] = [];
-
-  const isPreflop = scenario.street === 'PREFLOP';
 
   if (scenario.variants && scenario.variants.length > 0) {
     scenario.variants.forEach(variant => {
@@ -156,31 +137,11 @@ export const buildHandPool = (
     getActiveHandsFromRange(scenario.ranges).forEach(handKey => {
       allItems.push({ handKey, ranges: scenario.ranges });
     });
-
-    // For preflop scenarios, add hand types missing from the range as phantom fold hands.
-    // These hands have no entry in ranges → handleActionClick's else-branch marks fold correct.
-    if (isPreflop) {
-      const inRangeKeys = new Set(Object.keys(scenario.ranges));
-      // Count active (non-zero) hands already in pool to size the fold set proportionally
-      const activeCount = allItems.length;
-      // Target: folds represent ~35% of the combined pool (realistic preflop fold rate)
-      // Cap phantom folds so they don't overwhelm narrow ranges
-      const foldTarget = Math.min(
-        Math.round(activeCount * 0.54), // 35% of total ≈ 54% of active count
-        80                               // hard cap
-      );
-      const phantomFolds = generateAll169Hands()
-        .filter(h => !inRangeKeys.has(h));
-      fisherYates(phantomFolds);
-      phantomFolds.slice(0, foldTarget).forEach(handKey => {
-        allItems.push({ handKey, ranges: scenario.ranges });
-      });
-    }
   }
 
   if (allItems.length === 0) return [];
 
-  // 2. Filter for close decisions mode – phantom fold hands are excluded (obvious folds)
+  // 2. Filter for close decisions mode (mixed strategy hands only)
   if (mode === 'close') {
     const closeItems = allItems.filter(item => isCloseDecision(item.handKey, item.ranges));
     if (closeItems.length >= 3) allItems = closeItems;
@@ -209,12 +170,13 @@ export const buildHandPool = (
     }
   }
 
-  // 6. Anti-repeat at cycle boundary: push recent keys to the end
+  // 6. Anti-repeat at cycle boundary: move recently-seen hands to the END
+  // (pool is consumed via shift(), so END = consumed last)
   if (recentKeys.length > 0) {
     const recentSet = new Set(recentKeys);
     const front = interleaved.filter(item => !recentSet.has(item.handKey));
-    const back = interleaved.filter(item => recentSet.has(item.handKey));
-    return [...front, ...back];
+    const back  = interleaved.filter(item =>  recentSet.has(item.handKey));
+    return [...front, ...back]; // shift() consumes front first, back last ✓
   }
 
   return interleaved;

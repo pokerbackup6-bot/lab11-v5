@@ -550,8 +550,8 @@ const App: React.FC = () => {
       handPoolRef.current = newPool;
     }
 
-    // Pega a próxima mão do pool
-    let nextItem = handPoolRef.current.pop();
+    // Pega a próxima mão do pool (shift = começa pelo início, onde a interleaving é balanceada)
+    let nextItem = handPoolRef.current.shift();
     if (!nextItem) {
       // Se por algum motivo o pool estiver vazio após o refil, tentamos novamente
       resetToNewHand();
