@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../utils/supabase.ts';
 import { supabaseAdmin } from '../utils/supabaseAdmin.ts';
 
@@ -7,6 +7,9 @@ interface Profile {
   full_name: string | null;
   email: string | null;
   is_admin: boolean;
+  is_active: boolean;
+  subscription_status: string | null;
+  access_expires_at: string | null;
   created_at: string;
 }
 
@@ -23,6 +26,9 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
 
+  // Busca
+  const [searchQuery, setSearchQuery] = useState('');
+
   // Criar usuário
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState('');
@@ -38,6 +44,11 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
   const [changingPasswordId, setChangingPasswordId] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
+
+  // Extensão de acesso
+  const [extendingId, setExtendingId] = useState<string | null>(null);
+  const [extendLoading, setExtendLoading] = useState(false);
+  const [customExpireDate, setCustomExpireDate] = useState('');
 
   // Deletar
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -70,6 +81,17 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
     setLoading(false);
   };
 
+  // Filtra localmente por email ou nome
+  const filteredProfiles = useMemo(() => {
+    if (!searchQuery.trim()) return profiles;
+    const q = searchQuery.toLowerCase().trim();
+    return profiles.filter(
+      p =>
+        (p.email ?? '').toLowerCase().includes(q) ||
+        (p.full_name ?? '').toLowerCase().includes(q),
+    );
+  }, [profiles, searchQuery]);
+
   const toggleAdmin = async (id: string, current: boolean) => {
     const { error: err } = await supabase
       .from('profiles')
@@ -80,6 +102,29 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
       showSuccess('Permissão atualizada!');
     } else {
       showError('Erro ao atualizar permissão.');
+    }
+  };
+
+  const toggleActive = async (id: string, current: boolean) => {
+    const newActive = !current;
+    const { error: err } = await supabaseAdmin
+      .from('profiles')
+      .update({
+        is_active: newActive,
+        subscription_status: newActive ? 'manual' : 'canceled',
+      })
+      .eq('id', id);
+    if (!err) {
+      setProfiles(prev =>
+        prev.map(p =>
+          p.id === id
+            ? { ...p, is_active: newActive, subscription_status: newActive ? 'manual' : 'canceled' }
+            : p,
+        ),
+      );
+      showSuccess(newActive ? 'Acesso ativado!' : 'Acesso desativado.');
+    } else {
+      showError('Erro ao alterar status de acesso.');
     }
   };
 
@@ -102,15 +147,17 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
       return;
     }
 
-    // Atualiza profile com nome e is_admin
-    await supabase.from('profiles').upsert({
+    // Cria/atualiza profile com is_active=true e subscription_status='manual'
+    await supabaseAdmin.from('profiles').upsert({
       id: data.user.id,
       email: createEmail.toLowerCase(),
       full_name: createName || createEmail.split('@')[0].toUpperCase(),
       is_admin: createIsAdmin,
+      is_active: true,
+      subscription_status: 'manual',
     });
 
-    showSuccess(`Usuário ${createEmail} criado!`);
+    showSuccess(`Usuário ${createEmail} criado e ativado!`);
     setCreateEmail('');
     setCreateName('');
     setCreatePassword('');
@@ -139,6 +186,47 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
     setPasswordLoading(false);
   };
 
+  const handleExtendAccess = async (id: string, days: number | null, customDate?: string) => {
+    setExtendLoading(true);
+
+    let expiresAt: string;
+    if (customDate) {
+      expiresAt = new Date(customDate).toISOString();
+    } else if (days !== null) {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      expiresAt = d.toISOString();
+    } else {
+      setExtendLoading(false);
+      return;
+    }
+
+    const { error: err } = await supabaseAdmin
+      .from('profiles')
+      .update({
+        is_active: true,
+        subscription_status: 'manual',
+        access_expires_at: expiresAt,
+      })
+      .eq('id', id);
+
+    if (!err) {
+      setProfiles(prev =>
+        prev.map(p =>
+          p.id === id
+            ? { ...p, is_active: true, subscription_status: 'manual', access_expires_at: expiresAt }
+            : p,
+        ),
+      );
+      showSuccess('Acesso estendido com sucesso!');
+      setExtendingId(null);
+      setCustomExpireDate('');
+    } else {
+      showError('Erro ao estender acesso.');
+    }
+    setExtendLoading(false);
+  };
+
   const handleDelete = async (id: string) => {
     setDeleteLoading(true);
     const { error: err } = await supabaseAdmin.auth.admin.deleteUser(id);
@@ -152,7 +240,28 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
     setDeleteLoading(false);
   };
 
-  const inputClass = "w-full bg-white/5 border border-white/10 rounded-2xl py-3 px-5 text-white text-sm font-bold outline-none focus:border-sky-500/50 transition-all placeholder:text-gray-700";
+  const closeAllPanels = () => {
+    setChangingPasswordId(null);
+    setExtendingId(null);
+    setDeletingId(null);
+    setNewPassword('');
+    setCustomExpireDate('');
+  };
+
+  const formatDate = (iso: string | null) => {
+    if (!iso) return null;
+    return new Date(iso).toLocaleDateString('pt-BR', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+    });
+  };
+
+  const isExpired = (iso: string | null) => {
+    if (!iso) return false;
+    return new Date(iso) < new Date();
+  };
+
+  const inputClass =
+    'w-full bg-white/5 border border-white/10 rounded-2xl py-3 px-5 text-white text-sm font-bold outline-none focus:border-sky-500/50 transition-all placeholder:text-gray-700';
 
   return (
     <div className="h-screen overflow-y-auto bg-[#050505] text-white">
@@ -202,17 +311,49 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
         {/* TAB: USUÁRIOS */}
         {tab === 'users' && (
           <div className="space-y-3 animate-in fade-in duration-300">
-            {/* Barra topo: contador + botão novo */}
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] text-gray-600 font-black uppercase tracking-widest">
-                {profiles.length} usuário{profiles.length !== 1 ? 's' : ''}
-              </span>
-              <button
-                onClick={() => { setShowCreate(!showCreate); setError(''); }}
-                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${showCreate ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-sky-600/20 text-sky-400 border-sky-500/20 hover:bg-sky-600/30'}`}
-              >
-                {showCreate ? '✕ Cancelar' : '+ Novo Usuário'}
-              </button>
+            {/* Barra topo: busca + contador + botão novo */}
+            <div className="flex flex-col gap-3 mb-2">
+              {/* Campo de busca */}
+              <div className="relative">
+                <svg
+                  width="14" height="14"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                  className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="M21 21l-4.35-4.35" strokeLinecap="round" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Buscar por email ou nome..."
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-10 pr-5 text-white text-sm font-bold outline-none focus:border-sky-500/50 transition-all placeholder:text-gray-700"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-400 transition-colors"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-gray-600 font-black uppercase tracking-widest">
+                  {filteredProfiles.length} / {profiles.length} usuário{profiles.length !== 1 ? 's' : ''}
+                  {searchQuery && <span className="text-sky-600 ml-1">(filtrado)</span>}
+                </span>
+                <button
+                  onClick={() => { setShowCreate(!showCreate); setError(''); }}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${showCreate ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-sky-600/20 text-sky-400 border-sky-500/20 hover:bg-sky-600/30'}`}
+                >
+                  {showCreate ? '✕ Cancelar' : '+ Novo Usuário'}
+                </button>
+              </div>
             </div>
 
             {/* Formulário criar usuário */}
@@ -248,6 +389,13 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
                   required
                   minLength={6}
                 />
+                {/* Info: será criado como ativo */}
+                <div className="flex items-center gap-2 px-1">
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                  <span className="text-[10px] text-emerald-400 font-black uppercase tracking-widest">
+                    Usuário será criado com acesso ativo (status: Manual)
+                  </span>
+                </div>
                 <div className="flex items-center justify-between">
                   <label className="flex items-center gap-3 cursor-pointer">
                     <div
@@ -276,17 +424,18 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
               <div className="text-center py-20 text-gray-600 font-black uppercase tracking-[0.3em] text-[10px]">
                 Carregando...
               </div>
-            ) : profiles.length === 0 ? (
+            ) : filteredProfiles.length === 0 ? (
               <div className="text-center py-20 text-gray-600 font-black uppercase tracking-[0.3em] text-[10px]">
-                Nenhum usuário encontrado
+                {searchQuery ? 'Nenhum usuário encontrado para esta busca' : 'Nenhum usuário cadastrado'}
               </div>
             ) : (
-              profiles.map(p => (
+              filteredProfiles.map(p => (
                 <div key={p.id} className="bg-white/5 border border-white/5 rounded-3xl overflow-hidden transition-all hover:border-white/10">
                   {/* Linha principal */}
                   <div className="flex items-center justify-between p-5">
                     <div className="flex items-center gap-4 min-w-0">
-                      <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center text-gray-400 font-black text-xs uppercase shrink-0">
+                      {/* Avatar */}
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs uppercase shrink-0 ${p.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-gray-500'}`}>
                         {(p.full_name || p.email || '?').charAt(0).toUpperCase()}
                       </div>
                       <div className="min-w-0">
@@ -297,15 +446,51 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
                               Admin
                             </span>
                           )}
+                          {/* Badge de status ativo/inativo */}
+                          <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border shrink-0 ${p.is_active ? 'bg-sky-500/10 text-sky-400 border-sky-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>
+                            {p.is_active ? '● Ativo' : '○ Inativo'}
+                          </span>
+                          {/* Badge de expiração */}
+                          {p.access_expires_at && (
+                            <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border shrink-0 ${isExpired(p.access_expires_at) ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`}>
+                              {isExpired(p.access_expires_at) ? '⚠ Expirado' : `⏱ ${formatDate(p.access_expires_at)}`}
+                            </span>
+                          )}
                         </div>
                         <p className="text-gray-500 text-[10px] font-bold truncate">
                           {p.email || p.id.slice(0, 16) + '...'}
                         </p>
+                        {p.subscription_status && (
+                          <p className="text-gray-700 text-[9px] font-black uppercase tracking-widest">
+                            {p.subscription_status}
+                          </p>
+                        )}
                       </div>
                     </div>
 
                     {/* Ações */}
                     <div className="flex items-center gap-2 ml-4 shrink-0">
+                      {/* Toggle ativo/inativo */}
+                      <button
+                        onClick={() => toggleActive(p.id, p.is_active)}
+                        title={p.is_active ? 'Desativar acesso' : 'Ativar acesso'}
+                        className={`p-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${p.is_active ? 'bg-sky-500/10 text-sky-400 hover:bg-red-500/10 hover:text-red-400 border-sky-500/20 hover:border-red-500/20' : 'bg-red-500/10 text-red-400 hover:bg-sky-500/10 hover:text-sky-400 border-red-500/20 hover:border-sky-500/20'}`}
+                      >
+                        {p.is_active ? (
+                          /* ícone power ON */
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <path d="M18.36 6.64a9 9 0 1 1-12.73 0" strokeLinecap="round" />
+                            <line x1="12" y1="2" x2="12" y2="12" strokeLinecap="round" />
+                          </svg>
+                        ) : (
+                          /* ícone power OFF */
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <path d="M18.36 6.64a9 9 0 1 1-12.73 0" strokeLinecap="round" strokeDasharray="3 2" />
+                            <line x1="12" y1="2" x2="12" y2="12" strokeLinecap="round" />
+                          </svg>
+                        )}
+                      </button>
+
                       {/* Toggle admin */}
                       <button
                         onClick={() => toggleAdmin(p.id, p.is_admin)}
@@ -317,10 +502,25 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
                         </svg>
                       </button>
 
+                      {/* Estender acesso */}
+                      <button
+                        onClick={() => {
+                          if (extendingId === p.id) { setExtendingId(null); setCustomExpireDate(''); }
+                          else { setExtendingId(p.id); setChangingPasswordId(null); setDeletingId(null); setNewPassword(''); }
+                        }}
+                        title="Estender acesso"
+                        className={`p-2.5 rounded-xl transition-all border ${extendingId === p.id ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 'bg-white/5 text-gray-500 hover:bg-amber-500/10 hover:text-amber-400 border-white/10'}`}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" strokeLinecap="round" /><line x1="8" y1="2" x2="8" y2="6" strokeLinecap="round" /><line x1="3" y1="10" x2="21" y2="10" /><path d="M12 14v4m-2-2h4" strokeLinecap="round" />
+                        </svg>
+                      </button>
+
                       {/* Trocar senha */}
                       <button
                         onClick={() => {
                           setChangingPasswordId(changingPasswordId === p.id ? null : p.id);
+                          setExtendingId(null);
                           setDeletingId(null);
                           setNewPassword('');
                         }}
@@ -337,6 +537,7 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
                         onClick={() => {
                           setDeletingId(deletingId === p.id ? null : p.id);
                           setChangingPasswordId(null);
+                          setExtendingId(null);
                           setNewPassword('');
                         }}
                         title="Excluir usuário"
@@ -348,6 +549,57 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
                       </button>
                     </div>
                   </div>
+
+                  {/* Painel: estender acesso */}
+                  {extendingId === p.id && (
+                    <div className="px-5 pb-5 animate-in slide-in-from-top-1 duration-200">
+                      <div className="bg-black/30 border border-amber-500/10 rounded-2xl p-4 space-y-3">
+                        <p className="text-[10px] text-amber-400 font-black uppercase tracking-widest">Estender / Definir Acesso</p>
+                        {/* Botões rápidos */}
+                        <div className="flex gap-2">
+                          {[7, 30, 90].map(days => (
+                            <button
+                              key={days}
+                              onClick={() => handleExtendAccess(p.id, days)}
+                              disabled={extendLoading}
+                              className="flex-1 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-amber-400 transition-all disabled:opacity-50"
+                            >
+                              +{days}d
+                            </button>
+                          ))}
+                        </div>
+                        {/* Data manual */}
+                        <div className="flex gap-2 items-center">
+                          <input
+                            type="date"
+                            value={customExpireDate}
+                            onChange={e => setCustomExpireDate(e.target.value)}
+                            className="flex-1 bg-white/5 border border-white/10 rounded-xl py-2 px-4 text-white text-sm font-bold outline-none focus:border-amber-500/50 transition-all"
+                            min={new Date().toISOString().split('T')[0]}
+                          />
+                          <button
+                            onClick={() => { if (customExpireDate) handleExtendAccess(p.id, null, customExpireDate); }}
+                            disabled={extendLoading || !customExpireDate}
+                            className="px-4 py-2 bg-amber-500 hover:bg-amber-400 border border-amber-300 rounded-xl text-[10px] font-black uppercase tracking-widest text-black transition-all disabled:opacity-50 shrink-0"
+                          >
+                            {extendLoading ? '...' : 'Salvar'}
+                          </button>
+                          <button
+                            onClick={() => { setExtendingId(null); setCustomExpireDate(''); }}
+                            className="px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 transition-all shrink-0"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        {p.access_expires_at && (
+                          <p className={`text-[9px] font-black uppercase tracking-widest ${isExpired(p.access_expires_at) ? 'text-red-500' : 'text-gray-500'}`}>
+                            Expiração atual: {formatDate(p.access_expires_at)}
+                            {isExpired(p.access_expires_at) && ' — EXPIRADO'}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Painel: trocar senha */}
                   {changingPasswordId === p.id && (
