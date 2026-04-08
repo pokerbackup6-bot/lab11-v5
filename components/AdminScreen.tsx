@@ -17,10 +17,11 @@ interface AdminScreenProps {
   onBack: () => void;
   onManageScenarios: () => void;
   onMigrate: () => Promise<{ success: boolean; count: number; error?: string }>;
+  onManageContent: () => void;
 }
 
-const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, onMigrate }) => {
-  const [tab, setTab] = useState<'users' | 'scenarios'>('users');
+const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, onMigrate, onManageContent }) => {
+  const [tab, setTab] = useState<'users' | 'scenarios' | 'content'>('users');
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [success, setSuccess] = useState('');
@@ -148,7 +149,7 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
     }
 
     // Cria/atualiza profile com is_active=true e subscription_status='manual'
-    await supabaseAdmin.from('profiles').upsert({
+    const { error: profileErr } = await supabaseAdmin.from('profiles').upsert({
       id: data.user.id,
       email: createEmail.toLowerCase(),
       full_name: createName || createEmail.split('@')[0].toUpperCase(),
@@ -156,6 +157,12 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
       is_active: true,
       subscription_status: 'manual',
     });
+
+    if (profileErr) {
+      showError(`Usuário criado no Auth, mas erro ao salvar perfil: ${profileErr.message}`);
+      setCreateLoading(false);
+      return;
+    }
 
     showSuccess(`Usuário ${createEmail} criado e ativado!`);
     setCreateEmail('');
@@ -293,6 +300,12 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
             className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${tab === 'scenarios' ? 'bg-emerald-600/20 text-emerald-400 shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
           >
             Cenários
+          </button>
+          <button
+            onClick={() => setTab('content')}
+            className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${tab === 'content' ? 'bg-violet-600/20 text-violet-400 shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
+          >
+            Conteúdos
           </button>
         </div>
 
@@ -699,6 +712,23 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
                 className="px-8 py-4 bg-sky-600 hover:bg-sky-500 border border-sky-400 rounded-2xl text-xs font-black uppercase tracking-[0.2em] text-white transition-all active:scale-95 disabled:opacity-50"
               >
                 {migrateLoading ? 'Migrando...' : 'Migrar Cenários'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {tab === 'content' && (
+          <div className="animate-in fade-in duration-300 space-y-4">
+            <div className="p-8 bg-white/5 border border-white/5 rounded-3xl text-center space-y-3">
+              <h3 className="text-white font-black uppercase tracking-tighter">Gerenciar Conteúdos</h3>
+              <p className="text-gray-500 text-xs font-bold leading-relaxed max-w-xs mx-auto">
+                Crie, edite, duplique e exclua cursos e aulas. Publique quando estiver pronto para liberar aos alunos.
+              </p>
+              <button
+                onClick={onManageContent}
+                className="px-8 py-4 bg-violet-600 hover:bg-violet-500 border border-violet-400 rounded-2xl text-xs font-black uppercase tracking-[0.2em] text-white transition-all shadow-[0_10px_30px_rgba(139,92,246,0.3)] active:scale-95"
+              >
+                Abrir Gerenciador de Conteúdos
               </button>
             </div>
           </div>

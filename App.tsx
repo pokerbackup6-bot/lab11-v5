@@ -16,10 +16,15 @@ import LoginScreen from './components/LoginScreen.tsx';
 import RegisterScreen from './components/RegisterScreen.tsx';
 import AdminMemberModal from './components/AdminMemberModal.tsx';
 import AdminScreen from './components/AdminScreen.tsx';
+import AdminContentManager from './components/AdminContentManager.tsx';
 import TrainingSetupScreen from './components/TrainingSetupScreen.tsx';
 import ProfileScreen from './components/ProfileScreen.tsx';
 import RankingScreen from './components/RankingScreen.tsx';
 import HistoryScreen from './components/HistoryScreen.tsx';
+import SpotReplayScreen from './components/SpotReplayScreen.tsx';
+import DashboardScreen from './components/DashboardScreen.tsx';
+import CoursesScreen from './components/CoursesScreen.tsx';
+import LessonPlayer from './components/LessonPlayer.tsx';
 import { type DeckType, type TableStyle } from './components/ConfigModal.tsx';
 import { playDeal, playCorrect, playWrong, playTimeout } from './utils/sounds.ts';
 import { supabase } from './utils/supabase.ts';
@@ -368,12 +373,16 @@ const SupportButton = () => (
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isActive, setIsActive] = useState(false);
+  const [blockReason, setBlockReason] = useState<'inactive' | 'overdue' | null>(null);
   const [authView, setAuthView] = useState<'login' | 'register'>('login');
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [multiLoginError, setMultiLoginError] = useState(false);
 
-  const [currentView, setCurrentView] = useState<'selection' | 'setup' | 'trainer' | 'admin' | 'profile' | 'ranking' | 'history'>('selection');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'selection' | 'setup' | 'trainer' | 'admin' | 'admin-content' | 'profile' | 'ranking' | 'history' | 'spot-replay' | 'courses' | 'lesson-player'>('dashboard');
+  const [currentUserName, setCurrentUserName] = useState<string>('');
+  const [activeLessonData, setActiveLessonData] = useState<{ lesson: any; course: any } | null>(null);
+  const [selectionFilter, setSelectionFilter] = useState<string | undefined>(undefined);
 
   const [scenarios, setScenarios] = useState<Scenario[]>(SYSTEM_DEFAULT_SCENARIOS);
   const [scenariosLoading, setScenariosLoading] = useState(false);
@@ -475,6 +484,7 @@ const App: React.FC = () => {
           persistSessionStats(currentUser, handHistory);
           persistSessionHistory(currentUser, activeScenario?.name ?? 'Treino', handHistory, sessionElapsedSeconds);
         }
+        finalizeTrainingSession();
       }
       setShowReportModal(true);
     }
@@ -486,13 +496,35 @@ const App: React.FC = () => {
       if (session?.user) {
         const { data: profile } = await supabaseAdmin
           .from('profiles')
-          .select('is_admin, is_active')
+          .select('is_admin, is_active, full_name, subscription_status, access_expires_at')
           .eq('id', session.user.id)
           .single();
         setCurrentUser(session.user.email!);
         currentUserIdRef.current = session.user.id;
+        setCurrentUserName(profile?.full_name ?? '');
         setIsAdmin(profile?.is_admin ?? false);
-        setIsActive(profile?.is_active ?? false);
+
+        // Check access: auto-block if access_expires_at has passed
+        let active = profile?.is_active ?? false;
+        let reason: 'inactive' | 'overdue' | null = null;
+        if (active && profile?.access_expires_at) {
+          const expiresAt = new Date(profile.access_expires_at);
+          if (expiresAt < new Date()) {
+            active = false;
+            reason = profile?.subscription_status === 'overdue' ? 'overdue' : 'inactive';
+            // Auto-deactivate in DB
+            supabaseAdmin.from('profiles').update({ is_active: false }).eq('id', session.user.id);
+          }
+        }
+        if (!active && !reason && profile?.subscription_status === 'overdue') {
+          reason = 'overdue';
+        }
+        if (!active && !reason) {
+          reason = 'inactive';
+        }
+
+        setIsActive(active);
+        setBlockReason(active ? null : reason);
         setIsAuthenticated(true);
         fetchScenarios();
       }
@@ -502,9 +534,10 @@ const App: React.FC = () => {
       if (event === 'SIGNED_OUT' || !session) {
         setIsAuthenticated(false);
         setCurrentUser(null);
+        setCurrentUserName('');
         setIsAdmin(false);
         setIsActive(false);
-        setCurrentView('selection');
+        setCurrentView('dashboard');
         setAuthView('login');
       }
     });
@@ -897,13 +930,42 @@ const App: React.FC = () => {
     return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
   }, [timeBankSetting, feedback, timeRemaining, handleActionClick]);
 
-  const handleLogin = (email: string, userId: string, isAdminFlag: boolean, isActiveFlag: boolean) => {
+  const handleLogin = async (email: string, userId: string, isAdminFlag: boolean, isActiveFlag: boolean) => {
     setMultiLoginError(false);
     setCurrentUser(email);
     currentUserIdRef.current = userId;
     setIsAdmin(isAdminFlag);
-    setIsActive(isActiveFlag);
+
+    // Fetch full profile for expiration check
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('full_name, subscription_status, access_expires_at')
+      .eq('id', userId)
+      .single();
+    if (profile?.full_name) setCurrentUserName(profile.full_name);
+
+    // Check access expiration
+    let active = isActiveFlag;
+    let reason: 'inactive' | 'overdue' | null = null;
+    if (active && profile?.access_expires_at) {
+      const expiresAt = new Date(profile.access_expires_at);
+      if (expiresAt < new Date()) {
+        active = false;
+        reason = profile?.subscription_status === 'overdue' ? 'overdue' : 'inactive';
+        supabaseAdmin.from('profiles').update({ is_active: false }).eq('id', userId);
+      }
+    }
+    if (!active && !reason && profile?.subscription_status === 'overdue') {
+      reason = 'overdue';
+    }
+    if (!active && !reason) {
+      reason = 'inactive';
+    }
+
+    setIsActive(active);
+    setBlockReason(active ? null : reason);
     setIsAuthenticated(true);
+    setCurrentView('dashboard');
     fetchScenarios();
   };
 
@@ -911,9 +973,10 @@ const App: React.FC = () => {
     await supabase.auth.signOut();
     setIsAuthenticated(false);
     setCurrentUser(null);
+    setCurrentUserName('');
     setIsAdmin(false);
     setIsActive(false);
-    setCurrentView('selection');
+    setCurrentView('dashboard');
     setAuthView('login');
   };
 
@@ -924,16 +987,33 @@ const App: React.FC = () => {
     handPoolRef.current = []; 
     setSessionElapsedSeconds(0); 
   };
-  const handleStartTraining = (goal: TrainingGoal) => {
+  const handleStartTraining = async (goal: TrainingGoal) => {
     setTrainingGoal(goal);
     trainingGoalRef.current = goal;
     setCurrentView('trainer');
     setHandHistory([]);
     handPoolRef.current = [];
     recentHandKeysRef.current = [];
-    trainingSessionIdRef.current = crypto.randomUUID();
+    const sessionId = crypto.randomUUID();
+    trainingSessionIdRef.current = sessionId;
     setSessionElapsedSeconds(0);
     statsSavedRef.current = false;
+
+    // Persist training session start to Supabase
+    if (currentUserIdRef.current) {
+      supabase.from('training_sessions').insert({
+        id: sessionId,
+        user_id: currentUserIdRef.current,
+        scenario_id: activeScenario?.id ?? null,
+        scenario_name: activeScenario?.name ?? null,
+        training_mode: goal.mode,
+        goal_type: goal.type,
+        goal_value: goal.value,
+        is_active: true,
+      }).then(({ error }) => {
+        if (error) console.warn('[training_sessions] Insert error:', error.message);
+      });
+    }
   };
   const handleCreateNew = () => setShowScenarioCreatorModal(true);
   
@@ -1023,6 +1103,56 @@ const App: React.FC = () => {
     }
   };
 
+  const finalizeTrainingSession = async () => {
+    if (!currentUserIdRef.current || !trainingSessionIdRef.current) return;
+    const correctCount = handHistory.filter(h => h.status === 'correct').length;
+    // Update training session in Supabase
+    await supabase.from('training_sessions').update({
+      ended_at: new Date().toISOString(),
+      duration_seconds: sessionElapsedSeconds,
+      total_hands: handHistory.length,
+      correct_hands: correctCount,
+      is_active: false,
+    }).eq('id', trainingSessionIdRef.current);
+    // Update streak
+    await supabase.rpc('update_streak', { p_user_id: currentUserIdRef.current }).then(({ error }) => {
+      if (error) console.warn('[update_streak] Error:', error.message);
+    });
+    // Check and award badges
+    await checkAndAwardBadges();
+  };
+
+  const checkAndAwardBadges = async () => {
+    if (!currentUserIdRef.current) return;
+    // Get total stats
+    const { count: totalHands } = await supabase.from('hand_history').select('*', { count: 'exact', head: true }).eq('user_id', currentUserIdRef.current);
+    const { data: streakData } = await supabase.from('user_streaks').select('longest_streak').eq('user_id', currentUserIdRef.current).single();
+    const badges: string[] = [];
+    const handThresholds = [
+      { type: 'hands_100', threshold: 100 },
+      { type: 'hands_500', threshold: 500 },
+      { type: 'hands_1000', threshold: 1000 },
+      { type: 'hands_5000', threshold: 5000 },
+      { type: 'hands_10000', threshold: 10000 },
+    ];
+    const streakThresholds = [
+      { type: 'streak_3', threshold: 3 },
+      { type: 'streak_7', threshold: 7 },
+      { type: 'streak_30', threshold: 30 },
+    ];
+    for (const b of handThresholds) {
+      if ((totalHands || 0) >= b.threshold) badges.push(b.type);
+    }
+    const longestStreak = streakData?.longest_streak || 0;
+    for (const b of streakThresholds) {
+      if (longestStreak >= b.threshold) badges.push(b.type);
+    }
+    if (badges.length > 0) {
+      const rows = badges.map(b => ({ user_id: currentUserIdRef.current, badge_type: b }));
+      await supabase.from('user_badges').upsert(rows, { onConflict: 'user_id,badge_type', ignoreDuplicates: true });
+    }
+  };
+
   const handleStopTrainingConfirm = () => {
     if (!statsSavedRef.current) {
       statsSavedRef.current = true;
@@ -1030,12 +1160,13 @@ const App: React.FC = () => {
         persistSessionStats(currentUser, handHistory);
         persistSessionHistory(currentUser, activeScenario?.name ?? 'Treino', handHistory, sessionElapsedSeconds);
       }
+      finalizeTrainingSession();
     }
     setShowStopModal(false);
     setShowReportModal(true);
     setIsFocusMode(false);
   };
-  const onExitToSelection = () => { setShowReportModal(false); setCurrentView('selection'); setTrainingGoal(null); setIsFocusMode(false); };
+  const onExitToSelection = () => { setShowReportModal(false); setCurrentView('dashboard'); setTrainingGoal(null); setIsFocusMode(false); };
 
   const handleRestartConfirm = () => {
     setHandHistory([]);
@@ -1217,7 +1348,7 @@ const App: React.FC = () => {
     }
     return (
       <>
-        <RegisterScreen onRegister={(e) => handleLogin(e, false, false)} onGoToLogin={() => setAuthView('login')} />
+        <RegisterScreen onRegister={(e) => handleLogin(e, '', false, false)} onGoToLogin={() => setAuthView('login')} />
         <SupportButton />
       </>
     );
@@ -1225,28 +1356,43 @@ const App: React.FC = () => {
 
   // Access gate: active subscription required (admins always bypass)
   if (!isAdmin && !isActive) {
+    const isOverdue = blockReason === 'overdue';
     return (
       <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6 animate-in fade-in duration-700">
         <div className="w-full max-w-md text-center">
-          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-red-400">
+          <div className={`w-20 h-20 mx-auto mb-6 rounded-full flex items-center justify-center ${
+            isOverdue ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-red-500/10 border border-red-500/20'
+          }`}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={isOverdue ? 'text-amber-400' : 'text-red-400'}>
               <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
             </svg>
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tighter uppercase mb-2">Acesso não liberado</h1>
-          <p className="text-gray-500 text-sm mb-8 leading-relaxed">
-            Sua conta ainda não possui uma assinatura ativa.<br/>
-            Adquira o LAB11 para continuar.
-          </p>
-          <a
-            href="https://cakto.com.br"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-block px-8 py-4 bg-sky-600 hover:bg-sky-500 text-white font-black text-[11px] uppercase tracking-widest rounded-2xl transition-all shadow-2xl shadow-sky-500/20 mb-4"
-          >
-            Adquirir Acesso
-          </a>
-          <br/>
+          {isOverdue ? (
+            <>
+              <h1 className="text-2xl font-black text-white tracking-tighter uppercase mb-2">Plano Bloqueado</h1>
+              <p className="text-gray-500 text-sm mb-8 leading-relaxed">
+                Seu plano está bloqueado por falta de pagamento.<br/>
+                Entre em contato com o suporte para regularização.
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="text-2xl font-black text-white tracking-tighter uppercase mb-2">Acesso não liberado</h1>
+              <p className="text-gray-500 text-sm mb-8 leading-relaxed">
+                Sua conta ainda não possui uma assinatura ativa.<br/>
+                Adquira o LAB11 para continuar.
+              </p>
+              <a
+                href="https://cakto.com.br"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block px-8 py-4 bg-sky-600 hover:bg-sky-500 text-white font-black text-[11px] uppercase tracking-widest rounded-2xl transition-all shadow-2xl shadow-sky-500/20 mb-4"
+              >
+                Adquirir Acesso
+              </a>
+              <br/>
+            </>
+          )}
           <button
             onClick={handleLogout}
             className="text-[10px] text-gray-600 hover:text-gray-400 font-black uppercase tracking-widest transition-colors mt-2"
@@ -1258,51 +1404,35 @@ const App: React.FC = () => {
     );
   }
 
-  if (currentView === 'admin') return (
+  if (currentView === 'dashboard') return (
     <>
-      <AdminScreen
-        onBack={() => setCurrentView('selection')}
-        onManageScenarios={() => setShowScenarioCreatorModal(true)}
-        onMigrate={handleMigrateScenarios}
+      <DashboardScreen
+        userId={currentUserIdRef.current}
+        userEmail={currentUser || ''}
+        userName={currentUserName}
+        scenarios={scenarios}
+        onNavigate={(view: string) => setCurrentView(view as any)}
+        onStartTraining={(filter?: string) => {
+          setSelectionFilter(filter);
+          setCurrentView('selection');
+        }}
+        onQuickTraining={() => {
+          const pool = scenarios.length > 0 ? scenarios : [];
+          if (pool.length === 0) return;
+          const random = pool[Math.floor(Math.random() * pool.length)];
+          setActiveScenario(random);
+          setCurrentView('setup');
+          setHandHistory([]);
+          handPoolRef.current = [];
+          setSessionElapsedSeconds(0);
+        }}
       />
-      <ScenarioCreatorModal isOpen={showScenarioCreatorModal} scenarios={scenarios} onClose={() => setShowScenarioCreatorModal(false)} onSave={handleSaveScenario} onDelete={handleDeleteScenario} isAdmin={isAdmin} />
-    </>
-  );
-
-  if (currentView === 'profile') return (
-    <ProfileScreen currentUser={currentUser!} onBack={() => setCurrentView('selection')} />
-  );
-
-  if (currentView === 'ranking') return (
-    <RankingScreen currentUser={currentUser} onBack={() => setCurrentView('selection')} />
-  );
-
-  if (currentView === 'history') return (
-    <HistoryScreen currentUser={currentUser!} onBack={() => setCurrentView('selection')} />
-  );
-
-  if (currentView === 'selection') return (
-    <div className="w-full h-screen overflow-y-auto bg-[#050505]">
-      <SelectionScreen scenarios={scenarios} onSelect={onSelectScenario} onCreateNew={handleCreateNew} isAdmin={isAdmin} />
-      <ScenarioCreatorModal isOpen={showScenarioCreatorModal} scenarios={scenarios} onClose={() => setShowScenarioCreatorModal(false)} onSave={handleSaveScenario} onDelete={handleDeleteScenario} isAdmin={isAdmin} />
-      <AdminMemberModal isOpen={showAdminMemberModal} onClose={() => setShowAdminMemberModal(false)} />
       <div className={`fixed z-[100] ${isMobile ? 'bottom-0 left-0 right-0 flex justify-center gap-2 p-3 bg-gradient-to-t from-[#050505] to-transparent' : 'top-8 right-8 flex gap-3'}`}>
-        {isAdmin && !isMobile && (
-          <button onClick={handleCreateNew} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 border border-emerald-400/40 rounded-xl text-[10px] font-black uppercase tracking-widest text-white transition-all flex items-center gap-2">
-            <span>+</span> Criar Cenário
-          </button>
-        )}
         {isAdmin && !isMobile && (
           <button onClick={() => setCurrentView('admin')} className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all">
             ADMIN
           </button>
         )}
-        <button onClick={() => setCurrentView('ranking')} className={`${isMobile ? 'flex-1 py-2.5' : 'px-4 py-2'} bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all flex items-center justify-center gap-1.5`}>
-          🏆 {isMobile ? '' : 'Ranking'}
-        </button>
-        <button onClick={() => setCurrentView('history')} className={`${isMobile ? 'flex-1 py-2.5' : 'px-4 py-2'} bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all`}>
-          {isMobile ? '📊' : 'Histórico'}
-        </button>
         <button onClick={() => setCurrentView('profile')} className={`${isMobile ? 'flex-1 py-2.5' : 'px-4 py-2'} bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all`}>
           {isMobile ? '👤' : 'Perfil'}
         </button>
@@ -1311,8 +1441,94 @@ const App: React.FC = () => {
         </button>
       </div>
       <SupportButton />
-    </div>
+    </>
   );
+
+  if (currentView === 'admin') return (
+    <>
+      <AdminScreen
+        onBack={() => setCurrentView('dashboard')}
+        onManageScenarios={() => setShowScenarioCreatorModal(true)}
+        onMigrate={handleMigrateScenarios}
+        onManageContent={() => setCurrentView('admin-content')}
+      />
+      <ScenarioCreatorModal isOpen={showScenarioCreatorModal} scenarios={scenarios} onClose={() => setShowScenarioCreatorModal(false)} onSave={handleSaveScenario} onDelete={handleDeleteScenario} isAdmin={isAdmin} />
+    </>
+  );
+
+  if (currentView === 'admin-content') return (
+    <AdminContentManager
+      userId={currentUserIdRef.current}
+      onBack={() => setCurrentView('admin')}
+    />
+  );
+
+  if (currentView === 'profile') return (
+    <ProfileScreen currentUser={currentUser!} onBack={() => setCurrentView('dashboard')} />
+  );
+
+  if (currentView === 'ranking') return (
+    <RankingScreen userId={currentUserIdRef.current} onBack={() => setCurrentView('dashboard')} onStartTraining={() => { setCurrentView('selection'); }} />
+  );
+
+  if (currentView === 'history') return (
+    <HistoryScreen currentUser={currentUser!} onBack={() => setCurrentView('dashboard')} />
+  );
+
+  if (currentView === 'spot-replay') return (
+    <SpotReplayScreen onBack={() => setCurrentView('dashboard')} />
+  );
+
+  if (currentView === 'courses') return (
+    <CoursesScreen
+      userId={currentUserIdRef.current}
+      onBack={() => setCurrentView('dashboard')}
+      onPlayLesson={(lesson, course) => {
+        setActiveLessonData({ lesson, course });
+        setCurrentView('lesson-player');
+      }}
+    />
+  );
+
+  if (currentView === 'lesson-player' && activeLessonData) return (
+    <LessonPlayer
+      lesson={activeLessonData.lesson}
+      course={activeLessonData.course}
+      userId={currentUserIdRef.current}
+      onBack={() => setCurrentView('courses')}
+      onSelectLesson={(lesson) => {
+        setActiveLessonData({ ...activeLessonData, lesson });
+      }}
+    />
+  );
+
+  if (currentView === 'selection') {
+    // Filter scenarios based on selection from dashboard
+    const displayScenarios = selectionFilter === 'PREFLOP'
+      ? scenarios.filter(s => s.street === 'PREFLOP')
+      : selectionFilter === 'POSTFLOP'
+      ? scenarios.filter(s => s.street !== 'PREFLOP')
+      : scenarios;
+
+    return (
+      <div className="w-full h-screen overflow-y-auto bg-[#050505]">
+        <SelectionScreen scenarios={displayScenarios} onSelect={onSelectScenario} onCreateNew={handleCreateNew} isAdmin={isAdmin} />
+        <ScenarioCreatorModal isOpen={showScenarioCreatorModal} scenarios={scenarios} onClose={() => setShowScenarioCreatorModal(false)} onSave={handleSaveScenario} onDelete={handleDeleteScenario} isAdmin={isAdmin} />
+        <AdminMemberModal isOpen={showAdminMemberModal} onClose={() => setShowAdminMemberModal(false)} />
+        <div className={`fixed z-[100] ${isMobile ? 'bottom-0 left-0 right-0 flex justify-center gap-2 p-3 bg-gradient-to-t from-[#050505] to-transparent' : 'top-8 right-8 flex gap-3'}`}>
+          <button onClick={() => { setSelectionFilter(undefined); setCurrentView('dashboard'); }} className={`${isMobile ? 'flex-1 py-2.5' : 'px-4 py-2'} bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all`}>
+            {isMobile ? '←' : '← Dashboard'}
+          </button>
+          {isAdmin && !isMobile && (
+            <button onClick={handleCreateNew} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 border border-emerald-400/40 rounded-xl text-[10px] font-black uppercase tracking-widest text-white transition-all flex items-center gap-2">
+              <span>+</span> Criar Cenário
+            </button>
+          )}
+        </div>
+        <SupportButton />
+      </div>
+    );
+  }
   if (currentView === 'setup' && activeScenario) return <> <TrainingSetupScreen scenarioName={activeScenario.name} onStart={handleStartTraining} onBack={() => setCurrentView('selection')} /> <SupportButton /> </>;
 
   const playerCount = activeScenario?.playerCount || 9;
@@ -1339,14 +1555,30 @@ const App: React.FC = () => {
                 persistSessionStats(currentUser, handHistory);
                 persistSessionHistory(currentUser, activeScenario?.name ?? 'Treino', handHistory, sessionElapsedSeconds);
               }
+              finalizeTrainingSession();
             }
-            setCurrentView('selection');
+            setCurrentView('dashboard');
           }}
+          onShowDashboard={() => {
+            if (!statsSavedRef.current && handHistory.length > 0) {
+              statsSavedRef.current = true;
+              if (currentUser) {
+                persistSessionStats(currentUser, handHistory);
+                persistSessionHistory(currentUser, activeScenario?.name ?? 'Treino', handHistory, sessionElapsedSeconds);
+              }
+              finalizeTrainingSession();
+            }
+            setCurrentView('dashboard');
+          }}
+          onShowRanking={() => setCurrentView('ranking')}
+          onShowHistory={() => setCurrentView('history')}
+          onShowCourses={() => setCurrentView('courses')}
+          onShowProfile={() => setCurrentView('profile')}
           onLogout={handleLogout}
           currentUser={currentUser}
           history={handHistory}
-          ranges={currentRanges || activeScenario?.ranges} 
-          customActions={currentCustomActions.length > 0 ? currentCustomActions : activeScenario?.customActions} 
+          ranges={currentRanges || activeScenario?.ranges}
+          customActions={currentCustomActions.length > 0 ? currentCustomActions : activeScenario?.customActions}
           selectedHand={currentHandKey}
           board={board}
           trainingGoal={trainingGoal || undefined}

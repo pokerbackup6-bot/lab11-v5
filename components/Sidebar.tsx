@@ -25,7 +25,9 @@ import {
   PinOff,
   Menu,
   Trophy,
-  UserCircle
+  UserCircle,
+  Home,
+  BookOpen
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -47,9 +49,11 @@ interface SidebarProps {
   onShowScenarioCreator?: () => void;
   onShowAdminMember?: () => void;
   onBackToSelection?: () => void;
+  onShowDashboard?: () => void;
   onShowProfile?: () => void;
   onShowRanking?: () => void;
   onShowHistory?: () => void;
+  onShowCourses?: () => void;
   onLogout?: () => void;
   currentUser?: string | null;
   history: HandRecord[];
@@ -96,9 +100,11 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowScenarioCreator,
   onShowAdminMember,
   onBackToSelection: _onBackToSelection,
+  onShowDashboard,
   onShowProfile,
   onShowRanking,
   onShowHistory,
+  onShowCourses,
   onLogout,
   currentUser,
   history,
@@ -519,16 +525,17 @@ const Sidebar: React.FC<SidebarProps> = ({
 
           {/* Footer */}
           <div className="p-6 border-t border-white/5 space-y-2 shrink-0">
+            {/* Dashboard button */}
+            {onShowDashboard && (
+              <button
+                onClick={onShowDashboard}
+                className="w-full flex items-center gap-3 p-3 rounded-2xl bg-sky-500/5 border border-sky-500/10 text-sky-400 text-[9px] font-black uppercase tracking-widest hover:bg-sky-500/10 transition-all group"
+              >
+                <Home className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                Dashboard
+              </button>
+            )}
             <div className="flex gap-2">
-              {onShowProfile && (
-                <button
-                  onClick={onShowProfile}
-                  className="flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 text-gray-500 text-[9px] font-black uppercase tracking-widest hover:bg-white/10 hover:text-white transition-all"
-                >
-                  <UserCircle className="w-4 h-4" />
-                  Perfil
-                </button>
-              )}
               {onShowRanking && (
                 <button
                   onClick={onShowRanking}
@@ -536,6 +543,15 @@ const Sidebar: React.FC<SidebarProps> = ({
                 >
                   <Trophy className="w-4 h-4" />
                   Ranking
+                </button>
+              )}
+              {onShowCourses && (
+                <button
+                  onClick={onShowCourses}
+                  className="flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 text-gray-500 text-[9px] font-black uppercase tracking-widest hover:bg-sky-500/10 hover:text-sky-400 hover:border-sky-500/10 transition-all"
+                >
+                  <BookOpen className="w-4 h-4" />
+                  Aulas
                 </button>
               )}
               {onShowHistory && (
@@ -558,7 +574,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               </button>
             )}
             <div className="text-center">
-              <span className="text-[8px] text-gray-700 font-black tracking-[0.3em] uppercase">LAB11 v1.0</span>
+              <span className="text-[8px] text-gray-700 font-black tracking-[0.3em] uppercase">LAB11 v2.0</span>
             </div>
           </div>
         </motion.div>
