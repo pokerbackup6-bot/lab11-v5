@@ -2052,23 +2052,7 @@ const App: React.FC = () => {
             }
             setCurrentView('dashboard');
           }}
-          onShowDashboard={() => {
-            if (!statsSavedRef.current && handHistory.length > 0) {
-              statsSavedRef.current = true;
-              if (currentUser) {
-                persistSessionStats(currentUser, handHistory);
-                persistSessionHistory(currentUser, activeScenario?.name ?? 'Treino', handHistory, sessionElapsedSeconds);
-              }
-              finalizeTrainingSession();
-            }
-            setCurrentView('dashboard');
-          }}
-          onShowRanking={() => setCurrentView('ranking')}
-          onShowHistory={() => setCurrentView('history')}
-          onShowCourses={() => setCurrentView('courses')}
-          onShowBenefits={() => setCurrentView('benefits')}
-          onShowProfile={() => setCurrentView('profile')}
-          onLogout={handleLogout}
+          /* Navegação removida da tela de treino — foco total no simulador */
           currentUser={currentUser}
           history={handHistory}
           ranges={currentRanges || activeScenario?.ranges}

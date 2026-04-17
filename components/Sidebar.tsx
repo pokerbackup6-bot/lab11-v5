@@ -527,70 +527,71 @@ const Sidebar: React.FC<SidebarProps> = ({
             </section>
           </div>
 
-          {/* Footer */}
-          <div className="p-6 border-t border-white/5 space-y-2 shrink-0">
-            {/* Dashboard button */}
-            {onShowDashboard && (
-              <button
-                onClick={onShowDashboard}
-                className="w-full flex items-center gap-3 p-3 rounded-2xl bg-sky-500/5 border border-sky-500/10 text-sky-400 text-[9px] font-black uppercase tracking-widest hover:bg-sky-500/10 transition-all group"
-              >
-                <Home className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                Dashboard
-              </button>
-            )}
-            <div className="flex gap-2">
-              {onShowRanking && (
+          {/* Footer — só mostra navegação fora da tela de treino */}
+          {(onShowDashboard || onShowRanking || onShowCourses || onShowHistory || onShowBenefits || onLogout) && (
+            <div className="p-6 border-t border-white/5 space-y-2 shrink-0">
+              {onShowDashboard && (
                 <button
-                  onClick={onShowRanking}
-                  className="flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 text-gray-500 text-[9px] font-black uppercase tracking-widest hover:bg-yellow-500/10 hover:text-yellow-400 hover:border-yellow-500/10 transition-all"
+                  onClick={onShowDashboard}
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-sky-500/5 border border-sky-500/10 text-sky-400 text-[9px] font-black uppercase tracking-widest hover:bg-sky-500/10 transition-all group"
                 >
-                  <Trophy className="w-4 h-4" />
-                  Ranking
+                  <Home className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                  Dashboard
                 </button>
               )}
-              {onShowCourses && (
+              <div className="flex gap-2">
+                {onShowRanking && (
+                  <button
+                    onClick={onShowRanking}
+                    className="flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 text-gray-500 text-[9px] font-black uppercase tracking-widest hover:bg-yellow-500/10 hover:text-yellow-400 hover:border-yellow-500/10 transition-all"
+                  >
+                    <Trophy className="w-4 h-4" />
+                    Ranking
+                  </button>
+                )}
+                {onShowCourses && (
+                  <button
+                    onClick={onShowCourses}
+                    className="flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 text-gray-500 text-[9px] font-black uppercase tracking-widest hover:bg-sky-500/10 hover:text-sky-400 hover:border-sky-500/10 transition-all"
+                  >
+                    <BookOpen className="w-4 h-4" />
+                    Aulas
+                  </button>
+                )}
+                {onShowHistory && (
+                  <button
+                    onClick={onShowHistory}
+                    className="flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 text-gray-500 text-[9px] font-black uppercase tracking-widest hover:bg-sky-500/10 hover:text-sky-400 hover:border-sky-500/10 transition-all"
+                  >
+                    <History className="w-4 h-4" />
+                    Histórico
+                  </button>
+                )}
+              </div>
+              {onShowBenefits && (
                 <button
-                  onClick={onShowCourses}
-                  className="flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 text-gray-500 text-[9px] font-black uppercase tracking-widest hover:bg-sky-500/10 hover:text-sky-400 hover:border-sky-500/10 transition-all"
+                  onClick={onShowBenefits}
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/10 text-amber-400 text-[9px] font-black uppercase tracking-widest hover:bg-amber-500/10 transition-all group"
                 >
-                  <BookOpen className="w-4 h-4" />
-                  Aulas
+                  <Star className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                  Benefícios
                 </button>
               )}
-              {onShowHistory && (
+              <SidebarPromo />
+              {onLogout && (
                 <button
-                  onClick={onShowHistory}
-                  className="flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 text-gray-500 text-[9px] font-black uppercase tracking-widest hover:bg-sky-500/10 hover:text-sky-400 hover:border-sky-500/10 transition-all"
+                  onClick={onLogout}
+                  className="w-full flex items-center gap-3 p-4 rounded-2xl bg-white/5 border border-white/5 text-gray-500 text-[9px] font-black uppercase tracking-widest hover:bg-rose-500/10 hover:text-rose-500 hover:border-rose-500/10 transition-all group"
                 >
-                  <History className="w-4 h-4" />
-                  Histórico
+                  <LogOut className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+                  Sair da Conta
                 </button>
               )}
+              <div className="text-center">
+                <span className="text-[8px] text-gray-700 font-black tracking-[0.3em] uppercase">LAB11 v2.0</span>
+              </div>
             </div>
-            {onShowBenefits && (
-              <button
-                onClick={onShowBenefits}
-                className="w-full flex items-center gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/10 text-amber-400 text-[9px] font-black uppercase tracking-widest hover:bg-amber-500/10 transition-all group"
-              >
-                <Star className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                Benefícios
-              </button>
-            )}
-            <SidebarPromo />
-            {onLogout && (
-              <button
-                onClick={onLogout}
-                className="w-full flex items-center gap-3 p-4 rounded-2xl bg-white/5 border border-white/5 text-gray-500 text-[9px] font-black uppercase tracking-widest hover:bg-rose-500/10 hover:text-rose-500 hover:border-rose-500/10 transition-all group"
-              >
-                <LogOut className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-                Sair da Conta
-              </button>
-            )}
-            <div className="text-center">
-              <span className="text-[8px] text-gray-700 font-black tracking-[0.3em] uppercase">LAB11 v2.0</span>
-            </div>
-          </div>
+          )}
         </motion.div>
       )}
     </AnimatePresence>
