@@ -1161,11 +1161,11 @@ const App: React.FC = () => {
   handleActionClickRef.current = handleActionClick;
 
   useEffect(() => {
-    if (timeBankSetting === 'OFF' || feedback !== 'idle') {
+    if (timeBankSetting === 'OFF' || feedback !== 'idle' || currentView !== 'trainer') {
       if (timerRef.current) { window.clearInterval(timerRef.current); timerRef.current = null; }
       return;
     }
-    // Inicia o timer apenas quando feedback volta a 'idle' (nova mão)
+    // Inicia o timer apenas quando feedback volta a 'idle' (nova mão) na tela de treino
     // O timeRemaining já foi setado em resetToNewHand
     timerRef.current = window.setInterval(() => {
       setTimeRemaining(prev => {
@@ -1179,7 +1179,7 @@ const App: React.FC = () => {
       });
     }, 100);
     return () => { if (timerRef.current) { window.clearInterval(timerRef.current); timerRef.current = null; } };
-  }, [timeBankSetting, feedback]);
+  }, [timeBankSetting, feedback, currentView]);
 
   const handleLogin = async (email: string, userId: string, isAdminFlag: boolean, isActiveFlag: boolean) => {
     setMultiLoginError(false);
