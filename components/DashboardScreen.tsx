@@ -7,6 +7,7 @@ import {
 import { supabase } from '../utils/supabase.ts';
 import { supabaseAdmin } from '../utils/supabaseAdmin.ts';
 import { Scenario } from '../types.ts';
+import { BannerCarousel, TopTicker } from './AdComponents.tsx';
 
 interface DashboardStats {
   totalHands: number;
@@ -234,6 +235,7 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   return (
     <div className="fixed inset-0 bg-[#050505] text-white overflow-y-auto pb-24 md:pb-8">
+      <TopTicker />
       <div className="max-w-6xl mx-auto p-4 md:p-8">
 
         {/* Header */}
@@ -299,6 +301,9 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
             color="indigo"
           />
         </motion.div>
+
+        {/* Banner Promo */}
+        <BannerCarousel />
 
         {/* Ranking Preview + Training Shortcuts */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">

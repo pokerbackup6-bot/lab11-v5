@@ -25,6 +25,9 @@ import SpotReplayScreen from './components/SpotReplayScreen.tsx';
 import DashboardScreen from './components/DashboardScreen.tsx';
 import CoursesScreen from './components/CoursesScreen.tsx';
 import LessonPlayer from './components/LessonPlayer.tsx';
+import AdManager from './components/AdManager.tsx';
+import ScenarioVersionHistory from './components/ScenarioVersionHistory.tsx';
+import { BenefitsScreen } from './components/AdComponents.tsx';
 import { type DeckType, type TableStyle } from './components/ConfigModal.tsx';
 import { playDeal, playCorrect, playWrong, playTimeout } from './utils/sounds.ts';
 import { supabase } from './utils/supabase.ts';
@@ -83,8 +86,59 @@ const persistSessionHistory = (
 };
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+const isValidUUID = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+// ---------------------------------------------------------------------------
 // Mapeamento Scenario (camelCase) ↔ DB (snake_case)
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Snapshot: salva estado completo do cenário antes de qualquer modificação
+// ---------------------------------------------------------------------------
+const createScenarioSnapshot = async (
+  scenarioId: string,
+  scenarioData: Record<string, any>,
+  variantsData: any[],
+  action: 'update' | 'delete' | 'migrate' | 'bulk_replace',
+  description?: string,
+  userId?: string,
+) => {
+  const { error } = await supabaseAdmin.from('scenario_snapshots').insert({
+    scenario_id: scenarioId,
+    scenario_name: scenarioData.name || 'Sem nome',
+    scenario_data: scenarioData,
+    variants_data: variantsData,
+    action,
+    description: description || `${action} — ${scenarioData.name}`,
+    version: scenarioData.version || 1,
+    created_by: userId || null,
+  });
+  if (error) console.warn('[Snapshot] Erro ao criar snapshot:', error.message);
+  return !error;
+};
+
+const createBulkSnapshot = async (
+  scenarios: Array<{ scenario: Record<string, any>; variants: any[] }>,
+  action: 'migrate' | 'bulk_replace',
+  description: string,
+  userId?: string,
+) => {
+  const rows = scenarios.map(({ scenario, variants }) => ({
+    scenario_id: scenario.id || '00000000-0000-0000-0000-000000000000',
+    scenario_name: scenario.name || 'Sem nome',
+    scenario_data: scenario,
+    variants_data: variants,
+    action,
+    description,
+    version: scenario.version || 1,
+    created_by: userId || null,
+  }));
+  const { error } = await supabaseAdmin.from('scenario_snapshots').insert(rows);
+  if (error) console.warn('[Snapshot] Erro ao criar snapshots em lote:', error.message);
+  return !error;
+};
+
 const scenarioToDb = (s: Scenario, isDefault = false) => ({
   name: s.name,
   description: s.description ?? null,
@@ -104,6 +158,7 @@ const scenarioToDb = (s: Scenario, isDefault = false) => ({
   ranges: s.ranges ?? {},
   custom_actions: s.customActions ?? [],
   is_system_default: isDefault,
+  is_published: s.isPublished ?? true,
 });
 
 const dbToScenario = (row: any): Scenario => ({
@@ -125,6 +180,7 @@ const dbToScenario = (row: any): Scenario => ({
   board: row.board ?? [],
   ranges: row.ranges ?? {},
   customActions: row.custom_actions ?? [],
+  isPublished: row.is_published ?? true,
   variants: row.scenario_variants
     ?.sort((a: any, b: any) => a.sort_order - b.sort_order)
     .map((v: any) => ({
@@ -370,16 +426,97 @@ const SupportButton = () => (
   </div>
 );
 
+const ForceChangePassword: React.FC<{ onChanged: () => void; onLogout: () => void }> = ({ onChanged, onLogout }) => {
+  const [newPass, setNewPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (newPass.length < 6) { setError('A senha deve ter no mínimo 6 caracteres.'); return; }
+    if (newPass !== confirmPass) { setError('As senhas não coincidem.'); return; }
+    setLoading(true);
+    const { error: updateError } = await supabase.auth.updateUser({ password: newPass });
+    if (updateError) { setError(updateError.message); setLoading(false); return; }
+    onChanged();
+  };
+
+  return (
+    <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6 animate-in fade-in duration-700">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-10">
+          <div className="w-20 h-20 mx-auto mb-6 rounded-full flex items-center justify-center bg-sky-500/10 border border-sky-500/20">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-sky-400">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </div>
+          <h1 className="text-2xl font-black text-white tracking-tighter uppercase mb-2">Criar Nova Senha</h1>
+          <p className="text-gray-500 text-sm leading-relaxed">
+            Bem-vindo ao LAB11! Por segurança, crie uma senha pessoal para continuar.
+          </p>
+        </div>
+
+        <div className="bg-[#0f0f0f] border border-white/5 rounded-[40px] p-10 shadow-[0_40px_80px_-20px_rgba(0,0,0,1)] relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-sky-500/5 blur-[60px] rounded-full -mr-16 -mt-16 pointer-events-none"></div>
+          <form onSubmit={handleSubmit} className="space-y-6 relative z-10">
+            <div className="space-y-2">
+              <label className="text-[10px] text-gray-500 font-black uppercase tracking-widest px-1">Nova Senha</label>
+              <input
+                type="password"
+                value={newPass}
+                onChange={(e) => setNewPass(e.target.value)}
+                placeholder="Mínimo 6 caracteres"
+                disabled={loading}
+                className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-white text-sm font-bold outline-none focus:border-sky-500/50 transition-all placeholder:text-gray-700 shadow-inner disabled:opacity-50"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] text-gray-500 font-black uppercase tracking-widest px-1">Confirmar Senha</label>
+              <input
+                type="password"
+                value={confirmPass}
+                onChange={(e) => setConfirmPass(e.target.value)}
+                placeholder="Repita a nova senha"
+                disabled={loading}
+                className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-white text-sm font-bold outline-none focus:border-sky-500/50 transition-all placeholder:text-gray-700 shadow-inner disabled:opacity-50"
+              />
+            </div>
+            {error && (
+              <div className="text-red-500 text-[10px] font-black uppercase tracking-widest text-center">{error}</div>
+            )}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-5 bg-sky-600 hover:bg-sky-500 border border-sky-400 rounded-2xl text-xs font-black uppercase tracking-[0.2em] text-white transition-all shadow-[0_10px_30px_rgba(14,165,233,0.3)] active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Salvando...' : 'Definir Senha e Entrar'}
+            </button>
+          </form>
+          <button
+            onClick={onLogout}
+            className="w-full mt-4 text-[10px] text-gray-600 hover:text-gray-400 font-black uppercase tracking-widest transition-colors text-center"
+          >
+            Sair
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isActive, setIsActive] = useState(false);
   const [blockReason, setBlockReason] = useState<'inactive' | 'overdue' | null>(null);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
   const [authView, setAuthView] = useState<'login' | 'register'>('login');
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [multiLoginError, setMultiLoginError] = useState(false);
 
-  const [currentView, setCurrentView] = useState<'dashboard' | 'selection' | 'setup' | 'trainer' | 'admin' | 'admin-content' | 'profile' | 'ranking' | 'history' | 'spot-replay' | 'courses' | 'lesson-player'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'selection' | 'setup' | 'trainer' | 'admin' | 'admin-content' | 'profile' | 'ranking' | 'history' | 'spot-replay' | 'courses' | 'lesson-player' | 'benefits'>('dashboard');
   const [currentUserName, setCurrentUserName] = useState<string>('');
   const [activeLessonData, setActiveLessonData] = useState<{ lesson: any; course: any } | null>(null);
   const [selectionFilter, setSelectionFilter] = useState<string | undefined>(undefined);
@@ -455,6 +592,7 @@ const App: React.FC = () => {
   const [showSpotInfoModal, setShowSpotInfoModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showScenarioCreatorModal, setShowScenarioCreatorModal] = useState(false);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showAdminMemberModal, setShowAdminMemberModal] = useState(false);
 
   const [timeBankSetting, setTimeBankSetting] = useState<TimeBankOption>('OFF');
@@ -496,13 +634,14 @@ const App: React.FC = () => {
       if (session?.user) {
         const { data: profile } = await supabaseAdmin
           .from('profiles')
-          .select('is_admin, is_active, full_name, subscription_status, access_expires_at')
+          .select('is_admin, is_active, full_name, subscription_status, access_expires_at, must_change_password')
           .eq('id', session.user.id)
           .single();
         setCurrentUser(session.user.email!);
         currentUserIdRef.current = session.user.id;
         setCurrentUserName(profile?.full_name ?? '');
         setIsAdmin(profile?.is_admin ?? false);
+        setMustChangePassword(profile?.must_change_password ?? false);
 
         // Check access: auto-block if access_expires_at has passed
         let active = profile?.is_active ?? false;
@@ -887,9 +1026,10 @@ const App: React.FC = () => {
 
     // Salvar no banco (fire-and-forget)
     if (currentUserIdRef.current) {
+      const scenarioUUID = activeScenario.id && isValidUUID(activeScenario.id) ? activeScenario.id : null;
       supabase.from('hand_history').insert({
         user_id:             currentUserIdRef.current,
-        scenario_id:         activeScenario.id ?? null,
+        scenario_id:         scenarioUUID,
         scenario_name:       activeScenario.name ?? null,
         training_session_id: trainingSessionIdRef.current || null,
         hand_key:            handKey,
@@ -900,7 +1040,7 @@ const App: React.FC = () => {
         is_timeout:          isTimeout,
         correct_freq:        clickedFreq,
       }).then(({ error }) => {
-        if (error) console.warn('[hand_history] Erro ao salvar:', error.message);
+        if (error) console.error('[hand_history] Erro ao salvar:', error.message);
       });
     }
     
@@ -939,10 +1079,11 @@ const App: React.FC = () => {
     // Fetch full profile for expiration check
     const { data: profile } = await supabaseAdmin
       .from('profiles')
-      .select('full_name, subscription_status, access_expires_at')
+      .select('full_name, subscription_status, access_expires_at, must_change_password')
       .eq('id', userId)
       .single();
     if (profile?.full_name) setCurrentUserName(profile.full_name);
+    setMustChangePassword(profile?.must_change_password ?? false);
 
     // Check access expiration
     let active = isActiveFlag;
@@ -1001,32 +1142,54 @@ const App: React.FC = () => {
 
     // Persist training session start to Supabase
     if (currentUserIdRef.current) {
+      const scenarioUUID = activeScenario?.id && isValidUUID(activeScenario.id) ? activeScenario.id : null;
       supabase.from('training_sessions').insert({
         id: sessionId,
         user_id: currentUserIdRef.current,
-        scenario_id: activeScenario?.id ?? null,
+        scenario_id: scenarioUUID,
         scenario_name: activeScenario?.name ?? null,
         training_mode: goal.mode,
         goal_type: goal.type,
         goal_value: goal.value,
         is_active: true,
       }).then(({ error }) => {
-        if (error) console.warn('[training_sessions] Insert error:', error.message);
+        if (error) console.error('[training_sessions] Insert error:', error.message);
       });
     }
   };
   const handleCreateNew = () => setShowScenarioCreatorModal(true);
   
   const handleSaveScenario = async (newScenario: Scenario, shouldClose: boolean = true) => {
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(newScenario.id);
+    const isUUID = isValidUUID(newScenario.id);
     let savedId = newScenario.id;
 
     if (isUUID) {
-      const { error: updateErr } = await supabaseAdmin.from('scenarios').update(scenarioToDb(newScenario)).eq('id', newScenario.id);
+      // Snapshot antes de atualizar
+      const { data: existing } = await supabaseAdmin
+        .from('scenarios')
+        .select('*, scenario_variants(*)')
+        .eq('id', newScenario.id)
+        .single();
+      if (existing) {
+        await createScenarioSnapshot(
+          newScenario.id,
+          existing,
+          existing.scenario_variants || [],
+          'update',
+          `Atualização do cenário "${existing.name}" (v${existing.version || 1})`,
+          currentUserIdRef.current || undefined,
+        );
+      }
+
+      const newVersion = (existing?.version || 1) + 1;
+      const { error: updateErr } = await supabaseAdmin
+        .from('scenarios')
+        .update({ ...scenarioToDb(newScenario), version: newVersion })
+        .eq('id', newScenario.id);
       if (updateErr) { console.error('[Save] Update falhou:', updateErr); alert('Erro ao atualizar cenário: ' + updateErr.message); return; }
       await supabaseAdmin.from('scenario_variants').delete().eq('scenario_id', newScenario.id);
     } else {
-      const { data, error: insertErr } = await supabaseAdmin.from('scenarios').insert(scenarioToDb(newScenario)).select('id').single();
+      const { data, error: insertErr } = await supabaseAdmin.from('scenarios').insert({ ...scenarioToDb(newScenario), version: 1 }).select('id').single();
       if (insertErr) { console.error('[Save] Insert falhou:', insertErr); alert('Erro ao salvar cenário: ' + insertErr.message); return; }
       savedId = data?.id ?? newScenario.id;
     }
@@ -1054,7 +1217,36 @@ const App: React.FC = () => {
     if (shouldClose) setShowScenarioCreatorModal(false);
   };
 
+  const handleTogglePublish = async (id: string) => {
+    const { data: existing } = await supabaseAdmin
+      .from('scenarios')
+      .select('is_published, name')
+      .eq('id', id)
+      .single();
+    if (!existing) return;
+    const newVal = !existing.is_published;
+    await supabaseAdmin.from('scenarios').update({ is_published: newVal }).eq('id', id);
+    setScenarios(prev => prev.map(s => s.id === id ? { ...s, isPublished: newVal } : s));
+  };
+
   const handleDeleteScenario = async (id: string) => {
+    // Snapshot antes de deletar
+    const { data: existing } = await supabaseAdmin
+      .from('scenarios')
+      .select('*, scenario_variants(*)')
+      .eq('id', id)
+      .single();
+    if (existing) {
+      await createScenarioSnapshot(
+        id,
+        existing,
+        existing.scenario_variants || [],
+        'delete',
+        `Exclusão do cenário "${existing.name}"`,
+        currentUserIdRef.current || undefined,
+      );
+    }
+
     await supabaseAdmin.from('scenarios').delete().eq('id', id);
     setScenarios(prev => prev.filter(s => s.id !== id));
   };
@@ -1070,6 +1262,47 @@ const App: React.FC = () => {
       savedScenarios.forEach(s => scenarioMap.set(s.id, s));
       const allScenarios = Array.from(scenarioMap.values());
 
+      // Busca cenários atuais do banco para snapshot
+      const { data: currentDbScenarios } = await supabaseAdmin
+        .from('scenarios')
+        .select('*, scenario_variants(*)');
+
+      // Validação: mostra o que vai acontecer
+      const currentCount = currentDbScenarios?.length || 0;
+      const newCount = allScenarios.length;
+      const confirmMsg = [
+        `⚠️ MIGRAÇÃO DE CENÁRIOS`,
+        ``,
+        `Estado atual do banco: ${currentCount} cenários`,
+        `Cenários após migração: ${newCount} (${SYSTEM_DEFAULT_SCENARIOS.length} padrão + ${savedScenarios.length} customizados)`,
+        ``,
+        `Esta operação irá:`,
+        `• Criar backup de todos os ${currentCount} cenários atuais`,
+        `• Apagar todos os cenários existentes`,
+        `• Inserir ${newCount} cenários (localStorage + padrões)`,
+        ``,
+        `Os backups ficam salvos e podem ser revertidos.`,
+        ``,
+        `Deseja continuar?`,
+      ].join('\n');
+
+      if (!window.confirm(confirmMsg)) {
+        return { success: false, count: 0, error: 'Cancelado pelo usuário' };
+      }
+
+      // Snapshot em lote de TODOS os cenários atuais antes de deletar
+      if (currentDbScenarios && currentDbScenarios.length > 0) {
+        await createBulkSnapshot(
+          currentDbScenarios.map(row => ({
+            scenario: row,
+            variants: row.scenario_variants || [],
+          })),
+          'migrate',
+          `Migração: backup de ${currentCount} cenários antes de substituir por ${newCount}`,
+          currentUserIdRef.current || undefined,
+        );
+      }
+
       // Apaga tudo que existe no banco
       await supabaseAdmin.from('scenarios').delete().neq('id', '00000000-0000-0000-0000-000000000000');
 
@@ -1078,7 +1311,7 @@ const App: React.FC = () => {
         const isDefault = SYSTEM_DEFAULT_SCENARIOS.some(def => def.id === s.id);
         const { data: inserted } = await supabaseAdmin
           .from('scenarios')
-          .insert(scenarioToDb(s, isDefault))
+          .insert({ ...scenarioToDb(s, isDefault), version: 1 })
           .select('id')
           .single();
 
@@ -1100,6 +1333,132 @@ const App: React.FC = () => {
       return { success: true, count: allScenarios.length };
     } catch (err: any) {
       return { success: false, count: 0, error: err.message };
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Restaurar cenário a partir de um snapshot
+  // ---------------------------------------------------------------------------
+  const handleRestoreSnapshot = async (snapshotId: string): Promise<boolean> => {
+    try {
+      const { data: snapshot, error } = await supabaseAdmin
+        .from('scenario_snapshots')
+        .select('*')
+        .eq('id', snapshotId)
+        .single();
+      if (error || !snapshot) { alert('Snapshot não encontrado.'); return false; }
+
+      const scenarioData = snapshot.scenario_data;
+      const variantsData = snapshot.variants_data || [];
+      const originalId = snapshot.scenario_id;
+
+      // Verifica se o cenário ainda existe
+      const { data: existing } = await supabaseAdmin
+        .from('scenarios')
+        .select('*, scenario_variants(*)')
+        .eq('id', originalId)
+        .single();
+
+      if (existing) {
+        // Cria snapshot do estado atual antes de reverter
+        await createScenarioSnapshot(
+          originalId,
+          existing,
+          existing.scenario_variants || [],
+          'update',
+          `Backup antes de reverter para v${snapshot.version} de "${snapshot.scenario_name}"`,
+          currentUserIdRef.current || undefined,
+        );
+
+        // Atualiza cenário existente
+        const { error: updateErr } = await supabaseAdmin
+          .from('scenarios')
+          .update({
+            name: scenarioData.name,
+            description: scenarioData.description ?? null,
+            video_link: scenarioData.video_link ?? null,
+            modality: scenarioData.modality,
+            street: scenarioData.street,
+            preflop_action: scenarioData.preflop_action ?? '',
+            player_count: scenarioData.player_count,
+            hero_pos: scenarioData.hero_pos,
+            opponents: scenarioData.opponents ?? [],
+            stack_bb: scenarioData.stack_bb,
+            hero_bet_size: scenarioData.hero_bet_size,
+            opponent_bet_size: scenarioData.opponent_bet_size ?? null,
+            initial_pot_bb: scenarioData.initial_pot_bb ?? null,
+            opponent_action: scenarioData.opponent_action ?? null,
+            board: scenarioData.board ?? [],
+            ranges: scenarioData.ranges ?? {},
+            custom_actions: scenarioData.custom_actions ?? [],
+            is_system_default: scenarioData.is_system_default ?? false,
+            version: (existing.version || 1) + 1,
+          })
+          .eq('id', originalId);
+        if (updateErr) { alert('Erro ao restaurar: ' + updateErr.message); return false; }
+
+        // Recria variants
+        await supabaseAdmin.from('scenario_variants').delete().eq('scenario_id', originalId);
+        if (variantsData.length > 0) {
+          await supabaseAdmin.from('scenario_variants').insert(
+            variantsData.map((v: any, i: number) => ({
+              scenario_id: originalId,
+              board: v.board ?? [],
+              ranges: v.ranges ?? {},
+              custom_actions: v.custom_actions ?? [],
+              is_duplicate: v.is_duplicate ?? false,
+              sort_order: v.sort_order ?? i,
+            }))
+          );
+        }
+      } else {
+        // Cenário foi deletado — reinsere
+        const { data: reinserted, error: insertErr } = await supabaseAdmin
+          .from('scenarios')
+          .insert({
+            name: scenarioData.name,
+            description: scenarioData.description ?? null,
+            video_link: scenarioData.video_link ?? null,
+            modality: scenarioData.modality,
+            street: scenarioData.street,
+            preflop_action: scenarioData.preflop_action ?? '',
+            player_count: scenarioData.player_count,
+            hero_pos: scenarioData.hero_pos,
+            opponents: scenarioData.opponents ?? [],
+            stack_bb: scenarioData.stack_bb,
+            hero_bet_size: scenarioData.hero_bet_size,
+            opponent_bet_size: scenarioData.opponent_bet_size ?? null,
+            initial_pot_bb: scenarioData.initial_pot_bb ?? null,
+            opponent_action: scenarioData.opponent_action ?? null,
+            board: scenarioData.board ?? [],
+            ranges: scenarioData.ranges ?? {},
+            custom_actions: scenarioData.custom_actions ?? [],
+            is_system_default: scenarioData.is_system_default ?? false,
+            version: 1,
+          })
+          .select('id')
+          .single();
+        if (insertErr) { alert('Erro ao restaurar cenário deletado: ' + insertErr.message); return false; }
+
+        if (reinserted && variantsData.length > 0) {
+          await supabaseAdmin.from('scenario_variants').insert(
+            variantsData.map((v: any, i: number) => ({
+              scenario_id: reinserted.id,
+              board: v.board ?? [],
+              ranges: v.ranges ?? {},
+              custom_actions: v.custom_actions ?? [],
+              is_duplicate: v.is_duplicate ?? false,
+              sort_order: v.sort_order ?? i,
+            }))
+          );
+        }
+      }
+
+      await fetchScenarios();
+      return true;
+    } catch (err: any) {
+      alert('Erro inesperado ao restaurar: ' + err.message);
+      return false;
     }
   };
 
@@ -1354,6 +1713,19 @@ const App: React.FC = () => {
     );
   }
 
+  // Force password change gate
+  if (mustChangePassword) {
+    return <ForceChangePassword
+      onChanged={() => {
+        setMustChangePassword(false);
+        if (currentUserIdRef.current) {
+          supabaseAdmin.from('profiles').update({ must_change_password: false }).eq('id', currentUserIdRef.current);
+        }
+      }}
+      onLogout={handleLogout}
+    />;
+  }
+
   // Access gate: active subscription required (admins always bypass)
   if (!isAdmin && !isActive) {
     const isOverdue = blockReason === 'overdue';
@@ -1410,14 +1782,14 @@ const App: React.FC = () => {
         userId={currentUserIdRef.current}
         userEmail={currentUser || ''}
         userName={currentUserName}
-        scenarios={scenarios}
+        scenarios={scenarios.filter(s => s.isPublished !== false)}
         onNavigate={(view: string) => setCurrentView(view as any)}
         onStartTraining={(filter?: string) => {
           setSelectionFilter(filter);
           setCurrentView('selection');
         }}
         onQuickTraining={() => {
-          const pool = scenarios.length > 0 ? scenarios : [];
+          const pool = scenarios.filter(s => s.isPublished !== false);
           if (pool.length === 0) return;
           const random = pool[Math.floor(Math.random() * pool.length)];
           setActiveScenario(random);
@@ -1433,6 +1805,9 @@ const App: React.FC = () => {
             ADMIN
           </button>
         )}
+        <button onClick={() => setCurrentView('benefits')} className={`${isMobile ? 'flex-1 py-2.5' : 'px-4 py-2'} bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-amber-400 hover:text-amber-300 transition-all`}>
+          {isMobile ? '★' : 'Benefícios'}
+        </button>
         <button onClick={() => setCurrentView('profile')} className={`${isMobile ? 'flex-1 py-2.5' : 'px-4 py-2'} bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all`}>
           {isMobile ? '👤' : 'Perfil'}
         </button>
@@ -1451,8 +1826,10 @@ const App: React.FC = () => {
         onManageScenarios={() => setShowScenarioCreatorModal(true)}
         onMigrate={handleMigrateScenarios}
         onManageContent={() => setCurrentView('admin-content')}
+        onViewVersionHistory={() => setShowVersionHistory(true)}
       />
-      <ScenarioCreatorModal isOpen={showScenarioCreatorModal} scenarios={scenarios} onClose={() => setShowScenarioCreatorModal(false)} onSave={handleSaveScenario} onDelete={handleDeleteScenario} isAdmin={isAdmin} />
+      <ScenarioCreatorModal isOpen={showScenarioCreatorModal} scenarios={scenarios} onClose={() => setShowScenarioCreatorModal(false)} onSave={handleSaveScenario} onDelete={handleDeleteScenario} onTogglePublish={handleTogglePublish} isAdmin={isAdmin} />
+      <ScenarioVersionHistory isOpen={showVersionHistory} onClose={() => setShowVersionHistory(false)} onRestore={handleRestoreSnapshot} />
     </>
   );
 
@@ -1502,18 +1879,23 @@ const App: React.FC = () => {
     />
   );
 
+  if (currentView === 'benefits') return (
+    <BenefitsScreen onBack={() => setCurrentView('dashboard')} userId={currentUserIdRef.current} />
+  );
+
   if (currentView === 'selection') {
     // Filter scenarios based on selection from dashboard
+    const publishedScenarios = scenarios.filter(s => s.isPublished !== false);
     const displayScenarios = selectionFilter === 'PREFLOP'
-      ? scenarios.filter(s => s.street === 'PREFLOP')
+      ? publishedScenarios.filter(s => s.street === 'PREFLOP')
       : selectionFilter === 'POSTFLOP'
-      ? scenarios.filter(s => s.street !== 'PREFLOP')
-      : scenarios;
+      ? publishedScenarios.filter(s => s.street !== 'PREFLOP')
+      : publishedScenarios;
 
     return (
       <div className="w-full h-screen overflow-y-auto bg-[#050505]">
         <SelectionScreen scenarios={displayScenarios} onSelect={onSelectScenario} onCreateNew={handleCreateNew} isAdmin={isAdmin} />
-        <ScenarioCreatorModal isOpen={showScenarioCreatorModal} scenarios={scenarios} onClose={() => setShowScenarioCreatorModal(false)} onSave={handleSaveScenario} onDelete={handleDeleteScenario} isAdmin={isAdmin} />
+        <ScenarioCreatorModal isOpen={showScenarioCreatorModal} scenarios={scenarios} onClose={() => setShowScenarioCreatorModal(false)} onSave={handleSaveScenario} onDelete={handleDeleteScenario} onTogglePublish={handleTogglePublish} isAdmin={isAdmin} />
         <AdminMemberModal isOpen={showAdminMemberModal} onClose={() => setShowAdminMemberModal(false)} />
         <div className={`fixed z-[100] ${isMobile ? 'bottom-0 left-0 right-0 flex justify-center gap-2 p-3 bg-gradient-to-t from-[#050505] to-transparent' : 'top-8 right-8 flex gap-3'}`}>
           <button onClick={() => { setSelectionFilter(undefined); setCurrentView('dashboard'); }} className={`${isMobile ? 'flex-1 py-2.5' : 'px-4 py-2'} bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-all`}>
@@ -1573,6 +1955,7 @@ const App: React.FC = () => {
           onShowRanking={() => setCurrentView('ranking')}
           onShowHistory={() => setCurrentView('history')}
           onShowCourses={() => setCurrentView('courses')}
+          onShowBenefits={() => setCurrentView('benefits')}
           onShowProfile={() => setCurrentView('profile')}
           onLogout={handleLogout}
           currentUser={currentUser}
@@ -1722,7 +2105,7 @@ const App: React.FC = () => {
         videoLink={activeScenario?.videoLink}
       />
       <ConfigModal isOpen={showConfigModal} onClose={() => setShowConfigModal(false)} timeBank={timeBankSetting} setTimeBank={setTimeBankSetting} soundEnabled={soundEnabled} setSoundEnabled={setSoundEnabled} deckType={deckType} setDeckType={setDeckType} tableStyle={tableStyle} setTableStyle={setTableStyle} />
-      <ScenarioCreatorModal isOpen={showScenarioCreatorModal} scenarios={scenarios} onClose={() => setShowScenarioCreatorModal(false)} onSave={handleSaveScenario} onDelete={handleDeleteScenario} isAdmin={isAdmin} />
+      <ScenarioCreatorModal isOpen={showScenarioCreatorModal} scenarios={scenarios} onClose={() => setShowScenarioCreatorModal(false)} onSave={handleSaveScenario} onDelete={handleDeleteScenario} onTogglePublish={handleTogglePublish} isAdmin={isAdmin} />
       <AdminMemberModal isOpen={showAdminMemberModal} onClose={() => setShowAdminMemberModal(false)} />
     </div>
   );

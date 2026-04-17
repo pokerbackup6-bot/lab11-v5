@@ -69,6 +69,7 @@ export interface Scenario {
   customActions?: string[]; // Novos rótulos de botões customizados
   description?: string;
   videoLink?: string;
+  isPublished?: boolean; // false = rascunho (não aparece no treino), true = publicado
 }
 
 export interface User {

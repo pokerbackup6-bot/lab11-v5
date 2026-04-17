@@ -31,7 +31,12 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onGoToRegister }) =>
     });
 
     if (authError || !data.user) {
-      setError('E-mail ou senha incorretos.');
+      const msg = authError?.message?.toLowerCase() ?? '';
+      if (msg.includes('email not confirmed') || msg.includes('email_not_confirmed')) {
+        setError('E-mail ainda não confirmado. Contate o suporte.');
+      } else {
+        setError('E-mail ou senha incorretos.');
+      }
       setLoading(false);
       return;
     }

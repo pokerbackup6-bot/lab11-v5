@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../utils/supabase.ts';
 import { supabaseAdmin } from '../utils/supabaseAdmin.ts';
+import AdManager from './AdManager.tsx';
 
 interface Profile {
   id: string;
@@ -18,10 +19,11 @@ interface AdminScreenProps {
   onManageScenarios: () => void;
   onMigrate: () => Promise<{ success: boolean; count: number; error?: string }>;
   onManageContent: () => void;
+  onViewVersionHistory?: () => void;
 }
 
-const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, onMigrate, onManageContent }) => {
-  const [tab, setTab] = useState<'users' | 'scenarios' | 'content'>('users');
+const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, onMigrate, onManageContent, onViewVersionHistory }) => {
+  const [tab, setTab] = useState<'users' | 'scenarios' | 'content' | 'ads'>('users');
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [success, setSuccess] = useState('');
@@ -182,6 +184,7 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
     setPasswordLoading(true);
     const { error: err } = await supabaseAdmin.auth.admin.updateUserById(id, {
       password: newPassword,
+      email_confirm: true,
     });
     if (!err) {
       showSuccess('Senha alterada!');
@@ -306,6 +309,12 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
             className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${tab === 'content' ? 'bg-violet-600/20 text-violet-400 shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
           >
             Conteúdos
+          </button>
+          <button
+            onClick={() => setTab('ads')}
+            className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${tab === 'ads' ? 'bg-amber-600/20 text-amber-400 shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
+          >
+            Publicidade
           </button>
         </div>
 
@@ -714,6 +723,20 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
                 {migrateLoading ? 'Migrando...' : 'Migrar Cenários'}
               </button>
             </div>
+
+            {/* Histórico de versões */}
+            <div className="p-8 bg-amber-500/5 border border-amber-500/20 rounded-3xl space-y-3">
+              <h3 className="text-amber-400 font-black uppercase tracking-tighter text-sm">Histórico de Versões</h3>
+              <p className="text-gray-500 text-xs font-bold leading-relaxed">
+                Visualize todas as alterações feitas nos cenários. Cada edição, exclusão ou migração cria um <span className="text-gray-300">backup automático</span> que pode ser restaurado a qualquer momento.
+              </p>
+              <button
+                onClick={() => onViewVersionHistory?.()}
+                className="px-8 py-4 bg-amber-600/80 hover:bg-amber-500 border border-amber-400/30 rounded-2xl text-xs font-black uppercase tracking-[0.2em] text-white transition-all active:scale-95"
+              >
+                Ver Histórico
+              </button>
+            </div>
           </div>
         )}
 
@@ -733,6 +756,8 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onBack, onManageScenarios, on
             </div>
           </div>
         )}
+
+        {tab === 'ads' && <AdManager />}
       </div>
     </div>
   );

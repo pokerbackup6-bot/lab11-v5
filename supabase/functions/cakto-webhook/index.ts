@@ -143,24 +143,30 @@ async function grantAccess({ supabase, email, name, caktoSubscriptionId, caktoTr
 
     console.log(`[grantAccess] Reactivated existing user: ${email} → status=${subscriptionStatus}`)
   } else {
-    // New purchase — invite user (sends email with link to set their own password)
-    const { data: invited, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email, {
-      data: { full_name: name },
+    // New purchase — create user with default password (user must change on first login)
+    const { data: invited, error: inviteError } = await supabase.auth.admin.createUser({
+      email,
+      password: 'poker2026',
+      email_confirm: true,
+      user_metadata: { full_name: name },
     })
 
     if (inviteError || !invited?.user) {
-      throw new Error(`Erro ao convidar usuário: ${inviteError?.message ?? 'unknown'}`)
+      throw new Error(`Erro ao criar usuário: ${inviteError?.message ?? 'unknown'}`)
     }
 
-    await supabase.from('profiles').insert({
+    // Use upsert because the handle_new_user trigger may have already created
+    // the profile row when createUser inserted into auth.users
+    await supabase.from('profiles').upsert({
       id:                    invited.user.id,
       email,
       full_name:             name,
       is_active:             true,
       is_admin:              false,
+      must_change_password:  true,
       subscription_status:   subscriptionStatus,
       subscription_updated_at: now,
-    })
+    }, { onConflict: 'id' })
 
     console.log(`[grantAccess] New user created and invited: ${email} → status=${subscriptionStatus}`)
   }

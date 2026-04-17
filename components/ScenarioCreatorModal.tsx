@@ -6,6 +6,7 @@ interface ScenarioCreatorModalProps {
   onClose: () => void;
   onSave?: (s: Scenario, shouldClose?: boolean) => void;
   onDelete?: (id: string) => void;
+  onTogglePublish?: (id: string) => void;
   scenarios?: Scenario[];
   isAdmin?: boolean;
 }
@@ -41,7 +42,7 @@ const getActionColor = (label: string, index: number): string => {
 
 const EMPTY_CELL_BG = '#111111'; 
 
-const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onClose, onSave, onDelete, scenarios = [], isAdmin = false }) => {
+const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onClose, onSave, onDelete, onTogglePublish, scenarios = [], isAdmin = false }) => {
   const [step, setStep] = useState<number | 'manage'>(1);
   const [isDragging, setIsDragging] = useState(false);
   
@@ -63,6 +64,8 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
   const [opponentAction, setOpponentAction] = useState('Check');
   const [customActions, setCustomActions] = useState<string[]>([]);
   const [newActionInput, setNewActionInput] = useState('');
+
+  const [isPublished, setIsPublished] = useState(true);
 
   const [rangeData, setRangeData] = useState<RangeData>({});
   const [variants, setVariants] = useState<BoardVariant[]>([]);
@@ -110,6 +113,7 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
   const [rangeText, setRangeText] = useState('');
   const [suitRangeText, setSuitRangeText] = useState('');
   const [gtoWizardText, setGtoWizardText] = useState('');
+  const [pioSolverText, setPioSolverText] = useState('');
   const [bulkImportText, setBulkImportText] = useState('');
   const [bulkFlopText, setBulkFlopText] = useState('');
   const [showBulkImport, setShowBulkImport] = useState(false);
@@ -468,6 +472,7 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
       setActiveVariantId(null);
     }
     setCustomActions(s.customActions || []);
+    setIsPublished(s.isPublished ?? true);
     setStep(1);
   };
 
@@ -498,6 +503,7 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
       setActiveVariantId(null);
     }
     setCustomActions([...(s.customActions || [])]);
+    setIsPublished(false); // Cópia começa como rascunho
     setStep(1);
   };
 
@@ -850,6 +856,77 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     }
   };
 
+  const parsePioSolverRange = () => {
+    if (!pioSolverText.trim()) return;
+    if (!selectedAction) {
+      alert('Selecione uma ação antes de importar do PioSolver.');
+      return;
+    }
+
+    // Rank order for determining higher card
+    const RANK_ORDER = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'];
+    const rankIdx = (r: string) => RANK_ORDER.indexOf(r);
+
+    // Convert a specific combo (e.g. "AhKd") to abstract hand type (e.g. "AKo")
+    const comboToHandType = (card1: string, card2: string): string | null => {
+      if (card1.length !== 2 || card2.length !== 2) return null;
+      const r1 = card1[0].toUpperCase().replace('10','T');
+      const s1 = card1[1].toLowerCase();
+      const r2 = card2[0].toUpperCase().replace('10','T');
+      const s2 = card2[1].toLowerCase();
+      if (!RANK_ORDER.includes(r1) || !RANK_ORDER.includes(r2)) return null;
+      if (!['h','d','c','s'].includes(s1) || !['h','d','c','s'].includes(s2)) return null;
+      if (r1 === r2) return r1 + r2; // pair: AA, KK…
+      const [high, highS, low, lowS] = rankIdx(r1) > rankIdx(r2)
+        ? [r1, s1, r2, s2] : [r2, s2, r1, s1];
+      return high + low + (highS === lowS ? 's' : 'o');
+    };
+
+    // Aggregate: sum frequencies and count combos per hand type
+    const acc: Record<string, { sum: number; count: number }> = {};
+
+    // Each line can be "AhKd: 0.85," or "AhKd: 0.85" — commas separate entries
+    const entries = pioSolverText.split(/[,\n\r]+/);
+    let parsed = 0;
+
+    entries.forEach((entry: string) => {
+      const trimmed = entry.trim();
+      const match = trimmed.match(/^([2-9TJQKAtjqka][hdcsHDCS])([2-9TJQKAtjqka][hdcsHDCS]):\s*([\d.]+)$/);
+      if (!match) return;
+
+      const freq = parseFloat(match[3]);
+      if (isNaN(freq)) return;
+
+      const handType = comboToHandType(match[1], match[2]);
+      if (!handType) return;
+
+      if (!acc[handType]) acc[handType] = { sum: 0, count: 0 };
+      acc[handType].sum += freq;
+      acc[handType].count += 1;
+      parsed++;
+    });
+
+    if (parsed === 0) {
+      alert('Nenhum combo válido encontrado. Verifique o formato PioSolver (ex: AhKd: 0.85).');
+      return;
+    }
+
+    const newRangeData = { ...rangeData };
+    let applied = 0;
+
+    Object.entries(acc).forEach(([handType, { sum, count }]) => {
+      const avgFreq = sum / count; // 0–1 scale
+      if (avgFreq === 0) return; // skip pure-zero hands (fold hands)
+      const freqPct = Math.round(avgFreq * 100 * 100) / 100; // convert to 0–100, 2 decimal places
+      updateHandAction(newRangeData, handType, selectedAction, freqPct, true);
+      applied++;
+    });
+
+    updateRangeData(() => newRangeData);
+    setPioSolverText('');
+    alert(`PioSolver: ${parsed} combos processados → ${applied} tipos de mão importados para "${selectedAction}".`);
+  };
+
   const onClearMatrixClick = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -862,23 +939,43 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     }
   }, [activeVariantId, street]);
 
-  const handleFinish = () => {
+  const buildScenarioObject = (publishState: boolean): Scenario => {
     const isPostFlop = street !== 'PREFLOP';
-    
-    const newScenario: Scenario = {
+    return {
       id: currentId, name: name || 'Novo Cenário', description, videoLink, modality, street, preflopAction: action,
       playerCount, heroPos, opponents, stackBB, heroBetSize, opponentBetSize: isReRaiseAction ? opponentBetSize : undefined,
       initialPotBB: isPostFlop ? initialPotBB : undefined,
       board: isPostFlop ? board : undefined,
       opponentAction: isPostFlop ? opponentAction : undefined,
-      ranges: rangeData, 
+      ranges: rangeData,
       variants: isPostFlop ? variants : undefined,
-      customActions
+      customActions,
+      isPublished: publishState,
     };
-    if (onSave) onSave(newScenario, true);
+  };
+
+  const resetForm = () => {
     localStorage.removeItem(SCENARIO_DRAFT_KEY);
     onClose(); setStep(1); setRangeData({}); setVariants([]); setActiveVariantId(null); setCurrentId(`sc-${Date.now()}`);
-    setName(''); setDescription(''); setVideoLink('');
+    setName(''); setDescription(''); setVideoLink(''); setIsPublished(true);
+  };
+
+  const handleFinish = () => {
+    const newScenario = buildScenarioObject(isPublished);
+    if (onSave) onSave(newScenario, true);
+    resetForm();
+  };
+
+  const handleSaveAsDraft = () => {
+    const newScenario = buildScenarioObject(false);
+    if (onSave) onSave(newScenario, true);
+    resetForm();
+  };
+
+  const handlePublishAndSave = () => {
+    const newScenario = buildScenarioObject(true);
+    if (onSave) onSave(newScenario, true);
+    resetForm();
   };
 
   const addVariant = (initialBoard?: string[], initialRanges?: RangeData, initialActions?: string[]) => {
@@ -1001,10 +1098,30 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
                                 {s.variants?.length || (s.ranges ? 1 : 0)} FLOP(S)
                               </div>
                             )}
+                            {s.isPublished === false ? (
+                              <div className="px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-[8px] font-black text-amber-400 uppercase tracking-tighter">
+                                RASCUNHO
+                              </div>
+                            ) : (
+                              <div className="px-2 py-0.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[8px] font-black text-emerald-400 uppercase tracking-tighter">
+                                PUBLICADO
+                              </div>
+                            )}
                           </div>
                           <h4 className="text-white font-black text-lg uppercase truncate">{s.name}</h4>
                        </div>
                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => onTogglePublish?.(s.id)}
+                            className={`p-3 rounded-xl transition-all opacity-0 group-hover:opacity-100 ${s.isPublished === false ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'}`}
+                            title={s.isPublished === false ? 'Publicar' : 'Despublicar (tornar rascunho)'}
+                          >
+                            {s.isPublished === false ? (
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" strokeLinecap="round" strokeLinejoin="round" /><circle cx="12" cy="12" r="3" /></svg>
+                            ) : (
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" strokeLinecap="round" strokeLinejoin="round" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                            )}
+                          </button>
                           <button onClick={() => { if(window.confirm('Excluir este cenário permanentemente?')) onDelete?.(s.id); }} className="p-3 bg-red-500/10 rounded-xl text-red-500 hover:bg-red-500/20 transition-all opacity-0 group-hover:opacity-100" title="Excluir Cenário">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeLinecap="round" strokeLinejoin="round" /></svg>
                           </button>
@@ -1410,10 +1527,29 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
                       </button>
                     </div>
                   </div>
+                  {/* PioSolver Import */}
+                  <div className="space-y-2">
+                    <label className="text-[10px] text-gray-500 font-black uppercase tracking-widest block">PioSolver (ex: AhKd: 0.85, KhQh: 1)</label>
+                    <div className="flex flex-col gap-2">
+                      <textarea
+                        value={pioSolverText}
+                        onChange={(e) => setPioSolverText(e.target.value)}
+                        placeholder="Cole o output do PioSolver aqui (uma ação por vez)..."
+                        className="w-full h-24 bg-black/40 border border-white/10 rounded-xl py-2 px-4 text-white text-[10px] outline-none focus:border-violet-500/50 resize-none custom-scrollbar"
+                      />
+                      <button
+                        type="button"
+                        onClick={parsePioSolverRange}
+                        className="w-full bg-violet-700 py-2 rounded-xl text-white text-[10px] font-black uppercase shadow-lg hover:bg-violet-600 active:scale-95 transition-all"
+                      >
+                        Importar PioSolver
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </section>
-              
-              <button 
+
+              <button
                 type="button"
                 onClick={onClearMatrixClick}
                 className="w-full py-4 rounded-2xl bg-red-600/10 border border-red-500/20 text-red-500 text-[10px] font-black uppercase tracking-widest hover:bg-red-500/20 transition-all shadow-xl active:scale-95"
@@ -1426,16 +1562,26 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
 
         <div className="px-12 py-10 border-t border-white/5 bg-black/50 flex gap-6 shrink-0">
           <button type="button" onClick={() => step === 2 || step === 'manage' ? setStep(1) : onClose()} className="flex-1 py-6 rounded-[24px] border border-white/10 text-[12px] font-black uppercase tracking-[0.3em] text-gray-500 hover:text-white transition-all">{step === 1 ? 'CANCELAR' : 'RETORNAR'}</button>
-          {step !== 'manage' && <button type="button" onClick={() => {
-            if (step === 1) {
+          {step !== 'manage' && step === 1 && (
+            <button type="button" onClick={() => {
               if (street !== 'PREFLOP' && variants.length === 0) {
                 addVariant(board, rangeData, customActions);
               }
               setStep(2);
-            } else {
-              handleFinish();
-            }
-          }} className={`flex-[1.5] py-6 rounded-[24px] border text-[12px] font-black uppercase tracking-[0.3em] text-white shadow-2xl transition-all flex items-center justify-center gap-4 ${step === 1 ? 'bg-emerald-600 border-emerald-400' : 'bg-sky-600 border-sky-400'}`}>{step === 1 ? 'CONFIGURAR MATRIZ GTO' : 'SALVAR CENÁRIO'}</button>}
+            }} className="flex-[1.5] py-6 rounded-[24px] border text-[12px] font-black uppercase tracking-[0.3em] text-white shadow-2xl transition-all flex items-center justify-center gap-4 bg-emerald-600 border-emerald-400">
+              CONFIGURAR MATRIZ GTO
+            </button>
+          )}
+          {step !== 'manage' && step === 2 && (
+            <>
+              <button type="button" onClick={handleSaveAsDraft} className="flex-1 py-6 rounded-[24px] border border-amber-500/30 bg-amber-600/20 text-[12px] font-black uppercase tracking-[0.3em] text-amber-400 hover:bg-amber-600/30 transition-all flex items-center justify-center gap-3">
+                <span className="text-[16px]">◐</span> SALVAR RASCUNHO
+              </button>
+              <button type="button" onClick={handlePublishAndSave} className="flex-[1.2] py-6 rounded-[24px] border border-sky-400 bg-sky-600 text-[12px] font-black uppercase tracking-[0.3em] text-white shadow-2xl transition-all flex items-center justify-center gap-3 hover:bg-sky-500">
+                <span className="text-[16px]">▶</span> PUBLICAR
+              </button>
+            </>
+          )}
         </div>
       </div>
 

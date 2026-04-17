@@ -44,9 +44,10 @@ CREATE TRIGGER profiles_updated_at
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, full_name, must_change_password)
+  INSERT INTO public.profiles (id, email, full_name, must_change_password)
   VALUES (
     NEW.id,
+    NEW.email,
     COALESCE(NEW.raw_user_meta_data->>'full_name', ''),
     COALESCE((NEW.raw_user_meta_data->>'must_change_password')::boolean, true)
   );

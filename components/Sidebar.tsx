@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { SidebarPromo } from './AdComponents.tsx';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -54,6 +55,7 @@ interface SidebarProps {
   onShowRanking?: () => void;
   onShowHistory?: () => void;
   onShowCourses?: () => void;
+  onShowBenefits?: () => void;
   onLogout?: () => void;
   currentUser?: string | null;
   history: HandRecord[];
@@ -105,6 +107,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowRanking,
   onShowHistory,
   onShowCourses,
+  onShowBenefits,
   onLogout,
   currentUser,
   history,
@@ -564,6 +567,16 @@ const Sidebar: React.FC<SidebarProps> = ({
                 </button>
               )}
             </div>
+            {onShowBenefits && (
+              <button
+                onClick={onShowBenefits}
+                className="w-full flex items-center gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/10 text-amber-400 text-[9px] font-black uppercase tracking-widest hover:bg-amber-500/10 transition-all group"
+              >
+                <Star className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                Benefícios
+              </button>
+            )}
+            <SidebarPromo />
             {onLogout && (
               <button
                 onClick={onLogout}

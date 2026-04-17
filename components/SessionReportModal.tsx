@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { HandRecord } from '../types.ts';
+import { SessionReportPromo } from './AdComponents.tsx';
 
 interface PerformanceChartProps {
   history: HandRecord[];
@@ -144,6 +145,7 @@ const SessionReportModal: React.FC<SessionReportModalProps> = ({ isOpen, onClose
           {view === 'summary' ? (
             <div className="space-y-8 animate-in fade-in duration-500">
               <PerformanceChart history={history} />
+              <SessionReportPromo />
               <div className="grid grid-cols-2 gap-3">
                 <button onClick={shareWhatsApp} className="flex items-center justify-center gap-2 py-4 bg-green-600 text-white rounded-2xl font-black text-[10px] uppercase transition-all shadow-lg hover:bg-green-500">
                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.185-.573c.948.517 2.04.809 3.144.81 3.185 0 5.774-2.587 5.774-5.77 0-3.184-2.587-5.748-5.772-5.748zm3.292 8.163c-.144.406-.833.784-1.147.828-.312.045-.603.127-1.711-.311-1.352-.533-2.199-1.896-2.266-1.986-.067-.09-1.226-1.631-1.226-3.11 0-1.48.761-2.213 1.031-2.512.27-.3.585-.376.787-.376.203 0 .405.002.584.01.188.009.439-.072.69.536.252.613.855 2.083.93 2.234.075.15.126.326.025.528-.101.201-.151.326-.302.502-.151.176-.316.393-.453.528-.152.151-.311.316-.134.62.177.304.788 1.299 1.688 2.102.864.773 1.583 1.01 1.933 1.162.35.152.556.126.764-.112.208-.239.896-.104 1.135.239.239.342.157.652.126.837z"/></svg>
