@@ -1156,24 +1156,30 @@ const App: React.FC = () => {
     }, 1500);
   }, [players, feedback, resetToNewHand, activeScenario, currentPot]);
 
+  // Ref para o callback de timeout — evita recriar o interval a cada tick
+  const handleActionClickRef = useRef(handleActionClick);
+  handleActionClickRef.current = handleActionClick;
+
   useEffect(() => {
-    if (timeBankSetting === 'OFF' || feedback !== 'idle' || timeRemaining <= 0) {
+    if (timeBankSetting === 'OFF' || feedback !== 'idle') {
       if (timerRef.current) { window.clearInterval(timerRef.current); timerRef.current = null; }
       return;
     }
+    // Inicia o timer apenas quando feedback volta a 'idle' (nova mão)
+    // O timeRemaining já foi setado em resetToNewHand
     timerRef.current = window.setInterval(() => {
       setTimeRemaining(prev => {
-        const next = prev - 0.1;
+        const next = +(prev - 0.1).toFixed(1);
         if (next <= 0) {
-          if (timerRef.current) window.clearInterval(timerRef.current);
-          handleActionClick('Fold', true);
+          if (timerRef.current) { window.clearInterval(timerRef.current); timerRef.current = null; }
+          handleActionClickRef.current('Fold', true);
           return 0;
         }
         return next;
       });
     }, 100);
-    return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
-  }, [timeBankSetting, feedback, timeRemaining, handleActionClick]);
+    return () => { if (timerRef.current) { window.clearInterval(timerRef.current); timerRef.current = null; } };
+  }, [timeBankSetting, feedback]);
 
   const handleLogin = async (email: string, userId: string, isAdminFlag: boolean, isActiveFlag: boolean) => {
     setMultiLoginError(false);
