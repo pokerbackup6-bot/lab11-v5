@@ -1670,7 +1670,10 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
                 <div>
                   <div className="flex justify-between items-center mb-4">
                     <label className="text-[10px] text-gray-500 font-black uppercase tracking-[0.2em]">Pintar Estratégia</label>
-                    <button type="button" onClick={() => setIsEraserMode(!isEraserMode)} className={`p-2.5 rounded-xl border transition-all ${isEraserMode ? 'bg-red-600 border-red-400 text-white shadow-lg' : 'bg-white/5 border-white/10 text-gray-500'}`}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M7 21l-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" strokeLinecap="round" strokeLinejoin="round" /><path d="M22 21H7" strokeLinecap="round" strokeLinejoin="round" /><path d="m5 11l9 9" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={onClearMatrixClick} title={clearConfirmPending ? 'Clique para confirmar' : 'Limpar toda a matriz'} className={`p-2.5 rounded-xl border transition-all ${clearConfirmPending ? 'bg-red-600 border-red-400 text-white animate-pulse shadow-lg' : 'bg-white/5 border-white/10 text-gray-500 hover:text-red-400 hover:border-red-500/30'}`}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg></button>
+                      <button type="button" onClick={() => setIsEraserMode(!isEraserMode)} title="Borracha (apagar uma mão)" className={`p-2.5 rounded-xl border transition-all ${isEraserMode ? 'bg-red-600 border-red-400 text-white shadow-lg' : 'bg-white/5 border-white/10 text-gray-500'}`}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M7 21l-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" strokeLinecap="round" strokeLinejoin="round" /><path d="M22 21H7" strokeLinecap="round" strokeLinejoin="round" /><path d="m5 11l9 9" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
+                    </div>
                   </div>
                   <div className="flex flex-col gap-2.5">
                     {availableRangeActions.map((a, idx) => (
@@ -1745,13 +1748,6 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
                 </div>
               </section>
 
-              <button
-                type="button"
-                onClick={onClearMatrixClick}
-                className={`w-full py-4 rounded-2xl border text-[10px] font-black uppercase tracking-widest transition-all shadow-xl active:scale-95 ${clearConfirmPending ? 'bg-red-600 border-red-400 text-white animate-pulse' : 'bg-red-600/10 border-red-500/20 text-red-500 hover:bg-red-500/20'}`}
-              >
-                {clearConfirmPending ? 'CLIQUE NOVAMENTE PARA CONFIRMAR' : 'Limpar Matriz'}
-              </button>
             </div>
           </div>
         )}
