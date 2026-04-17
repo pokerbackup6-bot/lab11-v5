@@ -530,7 +530,10 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     if (!availablePositions.includes(heroPos)) {
       setHeroPos(availablePositions[0] || 'BTN');
     }
-    setOpponents(prev => prev.filter(pos => availablePositions.includes(pos)));
+    setOpponents(prev => {
+      const filtered = prev.filter(pos => availablePositions.includes(pos) && pos !== heroPos);
+      return filtered.length !== prev.length ? filtered : prev;
+    });
   }, [playerCount, availablePositions, heroPos]);
 
   useEffect(() => {
@@ -1551,7 +1554,22 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
               <div className="space-y-5">
                 <label className="text-[11px] text-gray-500 font-black uppercase tracking-widest block text-center">Oponente(s) no Pote</label>
                 <div className="flex flex-wrap justify-center gap-2">
-                  {availablePositions.map(pos => (<button key={pos} onClick={() => toggleOpponent(pos)} disabled={pos === heroPos} className={`w-14 h-14 rounded-2xl border text-[11px] font-black transition-all ${opponents.includes(pos) ? 'bg-orange-600 border-orange-400 text-white shadow-lg' : 'bg-black/40 border-white/10 text-gray-600 disabled:opacity-20'}`}>{pos}</button>))}
+                  {availablePositions.map(pos => {
+                    const isSelected = opponents.includes(pos);
+                    const isHero = pos === heroPos;
+                    // Só desabilita se for posição do herói E não estiver selecionado (permite desmarcar)
+                    const isDisabled = isHero && !isSelected;
+                    return (
+                      <button
+                        key={pos}
+                        onClick={() => toggleOpponent(pos)}
+                        disabled={isDisabled}
+                        className={`w-14 h-14 rounded-2xl border text-[11px] font-black transition-all ${isSelected ? 'bg-orange-600 border-orange-400 text-white shadow-lg' : 'bg-black/40 border-white/10 text-gray-600 disabled:opacity-20'}`}
+                      >
+                        {pos}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
