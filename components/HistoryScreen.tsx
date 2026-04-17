@@ -20,6 +20,7 @@ export interface SessionRecord {
   correctHands: number;
   durationSeconds: number;
   wrongHands: WrongHand[];
+  tableCount?: number;
 }
 
 interface HistoryScreenProps {
@@ -112,7 +113,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ currentUser, onBack }) =>
         // Buscar do Supabase
         let query = supabase
           .from('hand_history')
-          .select('training_session_id, scenario_name, is_correct, is_timeout, user_action, correct_action, hero_cards, hand_key, played_at')
+          .select('training_session_id, scenario_name, is_correct, is_timeout, user_action, correct_action, hero_cards, hand_key, played_at, table_count')
           .order('played_at', { ascending: true });
         if (userId) query = query.eq('user_id', userId);
         const { data, error } = await query;
@@ -143,6 +144,10 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ currentUser, onBack }) =>
             const durationSeconds = Math.round(
               (new Date(lastDate).getTime() - new Date(firstDate).getTime()) / 1000
             );
+            // Determine table_count for this session (most common value, or 1 as default)
+            const tcValues = hands.map(h => (h as any).table_count).filter(Boolean);
+            const sessionTableCount = tcValues.length > 0 ? Math.max(...tcValues) : 1;
+
             built.push({
               id: sid,
               email: currentUser,
@@ -152,6 +157,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ currentUser, onBack }) =>
               correctHands,
               durationSeconds: Math.max(durationSeconds, 0),
               wrongHands,
+              tableCount: sessionTableCount,
             });
           });
 
@@ -264,6 +270,27 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ currentUser, onBack }) =>
       .sort((a, b) => a.accuracy - b.accuracy)
       .slice(0, 5);
 
+    // Por quantidade de mesas
+    const tableCountMap: Record<number, { sessions: number; hands: number; correct: number; duration: number }> = {};
+    for (const s of sessions) {
+      const tc = s.tableCount || 1;
+      if (!tableCountMap[tc]) tableCountMap[tc] = { sessions: 0, hands: 0, correct: 0, duration: 0 };
+      tableCountMap[tc].sessions++;
+      tableCountMap[tc].hands += s.totalHands;
+      tableCountMap[tc].correct += s.correctHands;
+      tableCountMap[tc].duration += s.durationSeconds;
+    }
+    const byTableCount = Object.entries(tableCountMap)
+      .map(([tc, d]) => ({
+        tableCount: Number(tc),
+        sessions: d.sessions,
+        hands: d.hands,
+        accuracy: d.hands > 0 ? Math.round((d.correct / d.hands) * 100) : 0,
+        handsPerMinute: d.duration > 0 ? Math.round((d.hands / d.duration) * 60) : 0,
+        duration: d.duration,
+      }))
+      .sort((a, b) => a.tableCount - b.tableCount);
+
     const sparklineData = withAcc.slice(0, Math.min(12, withAcc.length)).reverse().map(s => s.acc);
 
     return {
@@ -271,7 +298,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ currentUser, onBack }) =>
       bestAcc, trend, streak, sessionsThisWeek, timeoutRate,
       byCorrect, byWrongAction, biasLabel, biasTip,
       totalWrong: allWrong.length,
-      byScenario, worstScenarios, sparklineData,
+      byScenario, worstScenarios, sparklineData, byTableCount,
     };
   }, [sessions]);
 
@@ -407,6 +434,43 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ currentUser, onBack }) =>
               </div>
             </div>
 
+            {/* Performance por Mesas */}
+            {perf.byTableCount.length > 1 && (
+              <div className="bg-[#111] border border-white/5 rounded-2xl overflow-hidden">
+                <div className="px-5 py-4 border-b border-white/5">
+                  <p className="text-[8px] font-black uppercase tracking-[0.3em] text-gray-600">Performance por Mesas Simultâneas</p>
+                </div>
+                <div className="divide-y divide-white/5">
+                  {perf.byTableCount.map(tc => (
+                    <div key={tc.tableCount} className="px-5 py-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                          <div className="flex gap-1">
+                            {Array.from({ length: tc.tableCount }).map((_, i) => (
+                              <div key={i} className="w-5 h-3 rounded-[3px] border border-rose-500/30 bg-rose-900/20" />
+                            ))}
+                          </div>
+                          <span className="text-[11px] font-black text-white">{tc.tableCount} Mesa{tc.tableCount > 1 ? 's' : ''}</span>
+                        </div>
+                        <span className={`text-[13px] font-black ${accClass(tc.accuracy)}`}>{tc.accuracy}%</span>
+                      </div>
+                      <div className="flex items-center gap-3 ml-0">
+                        <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full" style={{ width: `${tc.accuracy}%`, backgroundColor: accColor(tc.accuracy) }} />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4 mt-2">
+                        <span className="text-[8px] text-gray-600">{tc.hands} mãos</span>
+                        <span className="text-[8px] text-gray-600">{tc.sessions} sessões</span>
+                        <span className="text-[8px] text-gray-600">{tc.handsPerMinute} mãos/min</span>
+                        <span className="text-[8px] text-gray-600">{formatTotalTime(tc.duration)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Viés de Decisão */}
             <div className="bg-[#111] border border-white/5 rounded-2xl p-5">
               <div className="flex items-start justify-between mb-5">
@@ -501,7 +565,12 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ currentUser, onBack }) =>
                         'bg-rose-500/10 text-rose-400'
                       }`}>{accuracy}%</div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-[12px] font-black text-white truncate">{session.scenarioName}</div>
+                        <div className="text-[12px] font-black text-white truncate flex items-center gap-2">
+                          {session.scenarioName}
+                          {(session.tableCount || 1) >= 2 && (
+                            <span className="text-[7px] font-black uppercase tracking-widest text-rose-400 bg-rose-500/10 border border-rose-500/20 px-1.5 py-0.5 rounded shrink-0">{session.tableCount}x</span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-3 mt-0.5">
                           <span className="text-[9px] text-gray-600 font-mono">{formatDate(session.date)}</span>
                           <span className="flex items-center gap-1 text-[9px] text-gray-600">

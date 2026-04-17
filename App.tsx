@@ -28,7 +28,7 @@ import LessonPlayer from './components/LessonPlayer.tsx';
 import AdManager from './components/AdManager.tsx';
 import ScenarioVersionHistory from './components/ScenarioVersionHistory.tsx';
 import { BenefitsScreen } from './components/AdComponents.tsx';
-import { type DeckType, type TableStyle } from './components/ConfigModal.tsx';
+import { type DeckType, type TableStyle, type TableCount } from './components/ConfigModal.tsx';
 import { playDeal, playCorrect, playWrong, playTimeout } from './utils/sounds.ts';
 import { supabase } from './utils/supabase.ts';
 import { supabaseAdmin } from './utils/supabaseAdmin.ts';
@@ -605,6 +605,15 @@ const App: React.FC = () => {
     localStorage.setItem(TABLE_STYLE_KEY, tableStyle);
   }, [tableStyle]);
 
+  const [tableCount, setTableCount] = useState<TableCount>(
+    () => (Number(localStorage.getItem('lab11_table_count')) as TableCount) || 1
+  );
+  useEffect(() => {
+    localStorage.setItem('lab11_table_count', String(tableCount));
+  }, [tableCount]);
+
+  const isDual = tableCount === 2;
+
   const [feedback, setFeedback] = useState<'idle' | 'correct' | 'incorrect' | 'timeout'>('idle');
   const [correctFreq, setCorrectFreq] = useState<number>(0);
   const [currentPot, setCurrentPot] = useState(0);
@@ -631,6 +640,23 @@ const App: React.FC = () => {
   const timerRef = useRef<number | null>(null);
   const resetTimerRef = useRef<number | null>(null);
   const sessionTimerRef = useRef<number | null>(null);
+
+  // ─── Table 2 State (dual-table mode) ───
+  const [playersT2, setPlayersT2] = useState<Player[]>([]);
+  const [boardT2, setBoardT2] = useState<string[]>([]);
+  const [currentHandKeyT2, setCurrentHandKeyT2] = useState<string | null>(null);
+  const [currentRangesT2, setCurrentRangesT2] = useState<RangeData | null>(null);
+  const [currentCustomActionsT2, setCurrentCustomActionsT2] = useState<string[]>([]);
+  const [currentOpponentActionT2, setCurrentOpponentActionT2] = useState<string | null>(null);
+  const [currentOpponentHandKeyT2, setCurrentOpponentHandKeyT2] = useState<string | null>(null);
+  const [feedbackT2, setFeedbackT2] = useState<'idle' | 'correct' | 'incorrect' | 'timeout'>('idle');
+  const [correctFreqT2, setCorrectFreqT2] = useState<number>(0);
+  const [currentPotT2, setCurrentPotT2] = useState(0);
+  const [timeRemainingT2, setTimeRemainingT2] = useState<number>(0);
+  const handPoolRefT2 = useRef<any[]>([]);
+  const recentHandKeysRefT2 = useRef<string[]>([]);
+  const timerRefT2 = useRef<number | null>(null);
+  const resetTimerRefT2 = useRef<number | null>(null);
 
   useEffect(() => {
     if (currentView === 'trainer' && !showReportModal && !showStopModal) {
@@ -1149,6 +1175,8 @@ const App: React.FC = () => {
         is_timeout:          isTimeout,
         correct_freq:        clickedFreq,
       };
+      // Só envia table_count se for multi-mesa (evita erro se coluna não existir)
+      if (tableCount > 1) handRow.table_count = tableCount;
       // Só envia colunas de opponent ranges se tiver dados (migration v7)
       if (currentOpponentAction) {
         handRow.opponent_action = currentOpponentAction;
@@ -1190,6 +1218,324 @@ const App: React.FC = () => {
     }, 100);
     return () => { if (timerRef.current) { window.clearInterval(timerRef.current); timerRef.current = null; } };
   }, [timeBankSetting, feedback, currentView]);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TABLE 2 — duplicated handlers for dual-table mode
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const resetToNewHandT2 = useCallback(() => {
+    if (!activeScenario) return;
+
+    if (handPoolRefT2.current.length === 0) {
+      const mode: TrainingMode = trainingGoalRef.current?.mode ?? 'normal';
+      const newPool = buildHandPool(activeScenario, mode, recentHandKeysRefT2.current);
+      if (newPool.length === 0) return;
+      handPoolRefT2.current = newPool;
+    }
+
+    let nextItem = handPoolRefT2.current.shift();
+    if (!nextItem) { resetToNewHandT2(); return; }
+    let { variantId, handKey } = nextItem;
+    recentHandKeysRefT2.current = [...recentHandKeysRefT2.current.slice(-2), handKey];
+
+    let effectiveBoard = activeScenario.board || [];
+    let effectiveRanges = activeScenario.ranges;
+    let effectiveActions = activeScenario.customActions || ['Fold', 'Call', 'Raise', 'All-In'];
+
+    if (variantId && activeScenario.variants) {
+      const variant = activeScenario.variants.find(v => v.id === variantId);
+      if (variant) {
+        effectiveBoard = variant.board;
+        effectiveRanges = variant.ranges;
+        if (variant.customActions && variant.customActions.length > 0) effectiveActions = variant.customActions;
+      }
+    }
+
+    const isPostFlop = activeScenario.street !== 'PREFLOP';
+    if (isPostFlop && (!effectiveBoard || effectiveBoard.length < 3)) {
+      if (handPoolRefT2.current.length > 0) { setTimeout(() => resetToNewHandT2(), 0); }
+      return;
+    }
+
+    const variant = (variantId && activeScenario.variants) ? activeScenario.variants.find(v => v.id === variantId) : null;
+    const effectiveOpponentRanges = variant?.opponentRanges || activeScenario.opponentRanges;
+    const effectiveHeroRangesByAction = variant?.heroRangesByAction || activeScenario.heroRangesByAction;
+    const hasOpponentRanges = effectiveOpponentRanges && effectiveHeroRangesByAction
+      && Object.keys(effectiveOpponentRanges).length > 0
+      && Object.keys(effectiveHeroRangesByAction).length > 0;
+
+    let resolvedOpponentAction: string | null = null;
+    let resolvedOpponentHandKey: string | null = null;
+    let heroRangeForAction: RangeData = effectiveRanges;
+    let heroActionsForAction: string[] = effectiveActions;
+    const excludedCards = new Set<string>();
+
+    if (hasOpponentRanges) {
+      const oppResult = dealOpponentAction(effectiveOpponentRanges);
+      if (oppResult) {
+        resolvedOpponentAction = oppResult.action;
+        resolvedOpponentHandKey = oppResult.handKey;
+        const heroRange = effectiveHeroRangesByAction[oppResult.action];
+        if (heroRange && Object.keys(heroRange).length > 0) {
+          heroRangeForAction = heroRange;
+          effectiveRanges = heroRange;
+          const oppCards = generateCardsFromKey(oppResult.handKey);
+          oppCards.forEach(c => excludedCards.add(c));
+          if (isPostFlop && effectiveBoard) effectiveBoard.forEach(c => { if (c) excludedCards.add(c); });
+          const activeHeroHands = getActiveHandsFromRange(heroRange);
+          if (activeHeroHands.length > 0) handKey = activeHeroHands[Math.floor(Math.random() * activeHeroHands.length)];
+          const heroActionKeys = new Set<string>();
+          Object.values(heroRange).forEach(freq => { Object.keys(freq).forEach(a => heroActionKeys.add(a)); });
+          if (heroActionKeys.size > 0) heroActionsForAction = Array.from(heroActionKeys);
+        } else { resolvedOpponentAction = null; }
+      }
+    }
+
+    setCurrentOpponentActionT2(resolvedOpponentAction);
+    setCurrentOpponentHandKeyT2(resolvedOpponentHandKey);
+    setCurrentHandKeyT2(handKey);
+    setCurrentRangesT2(effectiveRanges);
+    setCurrentCustomActionsT2(heroActionsForAction);
+
+    const heroCards = generateCardsFromKey(handKey, excludedCards.size > 0 ? excludedCards : undefined);
+    const count = activeScenario.playerCount;
+    const tablePositions = getTablePositions(count);
+    const preflopOrder = getPreflopOrder(count);
+
+    setBoardT2(isPostFlop ? effectiveBoard : []);
+
+    let totalPot = 0;
+    const heroOrderIndex = preflopOrder.indexOf(activeScenario.heroPos);
+    const isIsoAction = activeScenario.preflopAction.toLowerCase() === 'iso';
+    const opponentBetVal = activeScenario.opponentBetSize || 0;
+    const dynamicOpponentBetVal = resolvedOpponentAction
+      ? (() => { const m = resolvedOpponentAction!.match(/(\d+\.?\d*)/); return m ? parseFloat(m[0]) : opponentBetVal; })()
+      : opponentBetVal;
+
+    const scenarioPlayers: Player[] = tablePositions.map((posName, i) => {
+      const isHero = posName === activeScenario.heroPos;
+      const isOpponent = activeScenario.opponents.includes(posName);
+      const orderIndex = preflopOrder.indexOf(posName);
+      let status = PlayerStatus.IDLE;
+      let betAmount = 0;
+      let hasCards = false;
+      let lastAction: string | undefined = undefined;
+
+      if (isPostFlop) {
+        if (isHero || isOpponent) hasCards = true; else status = PlayerStatus.FOLDED;
+        if (isHero) status = PlayerStatus.ACTING;
+        if (isOpponent) {
+          const oppAction = resolvedOpponentAction || activeScenario.opponentAction;
+          if (oppAction) lastAction = oppAction.toUpperCase();
+        }
+        betAmount = 0;
+      } else {
+        if (isIsoAction && isOpponent) { betAmount = BIG_BLIND_VALUE; status = PlayerStatus.IDLE; hasCards = true; }
+        else if (!isIsoAction && isOpponent && activeScenario.opponents[0] === posName) {
+          const betVal = resolvedOpponentAction ? dynamicOpponentBetVal : opponentBetVal;
+          if (betVal > 0) { betAmount = betVal * BIG_BLIND_VALUE; status = PlayerStatus.IDLE; hasCards = true; }
+          if (resolvedOpponentAction) lastAction = resolvedOpponentAction.toUpperCase();
+        }
+        if (orderIndex < heroOrderIndex && orderIndex !== -1) { if (!isOpponent) status = PlayerStatus.FOLDED; }
+        else if (isHero) { status = PlayerStatus.ACTING; hasCards = true; }
+        else if (orderIndex > heroOrderIndex) { hasCards = true; }
+        if (posName === 'SB') betAmount = Math.max(betAmount, BIG_BLIND_VALUE / 2);
+        else if (posName === 'BB') betAmount = Math.max(betAmount, BIG_BLIND_VALUE);
+      }
+      totalPot += betAmount;
+      const isDealer = count === 2 ? posName === 'SB' : posName === 'BTN';
+      return {
+        id: i + 1, name: `PLAYER_${i + 1}`,
+        chips: (Number(activeScenario.stackBB) * Number(BIG_BLIND_VALUE)) - (isPostFlop ? 0 : Number(betAmount)),
+        positionName: posName, status, betAmount, lastAction,
+        cards: isHero ? heroCards : (hasCards ? ['BACK', 'BACK'] : undefined),
+        isDealer,
+      };
+    });
+
+    if (isPostFlop) totalPot = (activeScenario.initialPotBB || 5.5) * BIG_BLIND_VALUE;
+
+    setPlayersT2(scenarioPlayers);
+    setCurrentPotT2(totalPot);
+    setFeedbackT2('idle');
+    setCorrectFreqT2(0);
+    // No duplicate deal sound for T2 — only T1 plays deal sound
+    if (timeBankSetting !== 'OFF') setTimeRemainingT2(timeBankSetting as number);
+    else setTimeRemainingT2(0);
+  }, [timeBankSetting, activeScenario]);
+
+  const initialResetDoneT2 = useRef(false);
+  useEffect(() => {
+    if (isAuthenticated && currentView === 'trainer' && activeScenario && isDual && !initialResetDoneT2.current) {
+      initialResetDoneT2.current = true;
+      // Small delay so T2 gets a different hand than T1
+      setTimeout(() => resetToNewHandT2(), 200);
+    }
+    if (currentView !== 'trainer' || !isDual) {
+      initialResetDoneT2.current = false;
+    }
+  }, [isAuthenticated, currentView, activeScenario, isDual, resetToNewHandT2]);
+
+  const handleActionClickT2 = useCallback((label: string, isTimeout: boolean = false) => {
+    if (feedbackT2 !== 'idle' && !isTimeout) return;
+    if (timerRefT2.current) { window.clearInterval(timerRefT2.current); timerRefT2.current = null; }
+
+    const heroIndex = playersT2.findIndex(p => p.positionName === activeScenario?.heroPos);
+    const hero = playersT2[heroIndex];
+    if (!hero || !activeScenario) return;
+
+    const [c1, c2] = hero.cards!;
+    const r1 = c1[0]; const s1 = c1[1]; const r2 = c2[0]; const s2 = c2[1];
+    const rank1Idx = RANKS.indexOf(r1); const rank2Idx = RANKS.indexOf(r2);
+
+    const normalizeKey = (k: string) => {
+      let n = k.trim().toUpperCase().replace(/10/g, 'T');
+      if (n.length === 4) return n[0] + n[1].toLowerCase() + n[2] + n[3].toLowerCase();
+      else if (n.length === 3) return n.slice(0, 2) + n[2].toLowerCase();
+      return n;
+    };
+
+    let handKey = '';
+    if (rank1Idx === rank2Idx) handKey = r1 + r2;
+    else if (rank1Idx > rank2Idx) handKey = r1 + r2 + (s1 === s2 ? 's' : 'o');
+    else handKey = r2 + r1 + (s1 === s2 ? 's' : 'o');
+
+    const comboKey1 = normalizeKey(r1 + s1 + r2 + s2);
+    const comboKey2 = normalizeKey(r2 + s2 + r1 + s1);
+    const handKeyNorm = normalizeKey(handKey);
+
+    const ranges = currentRangesT2 || activeScenario.ranges;
+    const labelLower = label.toLowerCase();
+    const actionMap = ranges[comboKey1] || ranges[comboKey2] || ranges[handKeyNorm];
+    let isCorrect = false;
+    let correctAction = 'Fold';
+    let clickedFreq = 0;
+
+    if (actionMap) {
+      const baseAction = (labelLower.includes('raise') || labelLower.includes('iso') || labelLower.includes('bet')) ? 'Raise' : (labelLower.includes('call') || labelLower.includes('check')) ? 'Call' : label;
+      const freq = actionMap[label] ?? actionMap[baseAction] ?? 0;
+      clickedFreq = freq as number;
+      isCorrect = clickedFreq > 0;
+      const entries = Object.entries(actionMap);
+      const sortedEntries = entries.sort((a, b) => (b[1] as number) - (a[1] as number));
+      const bestAction = sortedEntries[0];
+      if (bestAction) correctAction = bestAction[0];
+    } else {
+      isCorrect = labelLower.includes('fold');
+    }
+
+    if (!isTimeout) {
+      let additionalBetVal = 0;
+      let newTotalBetRaw = hero.betAmount || 0;
+      let newChips = hero.chips;
+      const isBettingAction = labelLower.includes('raise') || labelLower.includes('all-in') || labelLower.includes('shove') || labelLower.includes('rfi') || labelLower.includes('bet') || labelLower.includes('call') || labelLower.includes('iso') || labelLower.includes('check') || labelLower.includes('pagar');
+
+      if (isBettingAction && !labelLower.includes('check')) {
+        let betAmountBB: number = 0;
+        if (labelLower.includes('call') || labelLower.includes('pagar')) betAmountBB = Number(activeScenario.opponentBetSize || 1);
+        else if (labelLower.includes('all-in') || labelLower.includes('shove')) betAmountBB = (Number(hero.chips) + Number(hero.betAmount)) / BIG_BLIND_VALUE;
+        else {
+          const match = label.match(/(\d+\.?\d*)/);
+          if (label.includes('%')) { const p = match ? parseFloat(match[0]) : 0; betAmountBB = (currentPotT2 / BIG_BLIND_VALUE) * (p / 100); }
+          else if (labelLower.includes('baixo')) betAmountBB = (currentPotT2 / BIG_BLIND_VALUE) * 0.3;
+          else if (labelLower.includes('médio') || labelLower.includes('medio')) betAmountBB = (currentPotT2 / BIG_BLIND_VALUE) * 0.5;
+          else if (labelLower.includes('alto')) betAmountBB = (currentPotT2 / BIG_BLIND_VALUE) * 0.8;
+          else if (labelLower.includes('overbet')) betAmountBB = (currentPotT2 / BIG_BLIND_VALUE) * 1.25;
+          else betAmountBB = match ? parseFloat(match[0]) : Number(activeScenario.heroBetSize);
+        }
+        const currentBetVal = Number(hero.betAmount || 0);
+        newTotalBetRaw = betAmountBB * Number(BIG_BLIND_VALUE);
+        additionalBetVal = newTotalBetRaw - currentBetVal;
+        newChips = Number(hero.chips || 0) - additionalBetVal;
+      }
+
+      setPlayersT2(prev => {
+        const next = [...prev];
+        const p = { ...next[heroIndex] };
+        p.chips = newChips; p.betAmount = newTotalBetRaw;
+        p.lastAction = label.toUpperCase();
+        p.status = labelLower.includes('fold') ? PlayerStatus.FOLDED : PlayerStatus.IDLE;
+        next[heroIndex] = p;
+        return next;
+      });
+      if (additionalBetVal !== 0) setCurrentPotT2(curr => Number(curr) + additionalBetVal);
+    }
+
+    const status = isCorrect ? 'correct' : 'incorrect';
+    setFeedbackT2(isTimeout ? 'timeout' : status);
+    setCorrectFreqT2(isCorrect ? clickedFreq : 0);
+
+    if (soundEnabledRef.current) {
+      if (isTimeout) playTimeout();
+      else if (isCorrect) playCorrect(clickedFreq >= 60 ? 'high' : clickedFreq >= 30 ? 'mid' : 'low');
+      else playWrong();
+    }
+
+    const newHand: HandRecord = {
+      id: Date.now() + 1, // +1 to avoid collision with T1
+      cards: hero.cards?.join(' ') || '??',
+      action: isTimeout ? 'TEMPO ESGOTADO' : label,
+      correctAction: correctAction,
+      status: status,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isTimeout: isTimeout
+    };
+    setHandHistory(prev => [...prev, newHand]);
+
+    if (currentUserIdRef.current) {
+      const scenarioUUID = activeScenario.id && isValidUUID(activeScenario.id) ? activeScenario.id : null;
+      const handRow: Record<string, any> = {
+        user_id: currentUserIdRef.current,
+        scenario_id: scenarioUUID,
+        scenario_name: activeScenario.name ?? null,
+        training_session_id: trainingSessionIdRef.current || null,
+        hand_key: handKey,
+        hero_cards: hero.cards ?? [],
+        user_action: isTimeout ? 'TIMEOUT' : label,
+        correct_action: correctAction,
+        is_correct: isCorrect,
+        is_timeout: isTimeout,
+        correct_freq: clickedFreq,
+        table_count: 2,
+      };
+      if (currentOpponentActionT2) {
+        handRow.opponent_action = currentOpponentActionT2;
+        handRow.opponent_hand_key = currentOpponentHandKeyT2 || null;
+      }
+      supabase.from('hand_history').insert(handRow).then(({ error }) => {
+        if (error) console.error('[hand_history T2] Erro ao salvar:', error.message);
+      });
+    }
+
+    if (resetTimerRefT2.current) window.clearTimeout(resetTimerRefT2.current);
+    resetTimerRefT2.current = window.setTimeout(() => {
+      resetToNewHandT2();
+      resetTimerRefT2.current = null;
+    }, 1500);
+  }, [playersT2, feedbackT2, resetToNewHandT2, activeScenario, currentPotT2]);
+
+  const handleActionClickRefT2 = useRef(handleActionClickT2);
+  handleActionClickRefT2.current = handleActionClickT2;
+
+  // Timer effect for Table 2
+  useEffect(() => {
+    if (!isDual || timeBankSetting === 'OFF' || feedbackT2 !== 'idle' || currentView !== 'trainer') {
+      if (timerRefT2.current) { window.clearInterval(timerRefT2.current); timerRefT2.current = null; }
+      return;
+    }
+    timerRefT2.current = window.setInterval(() => {
+      setTimeRemainingT2(prev => {
+        const next = +(prev - 0.1).toFixed(1);
+        if (next <= 0) {
+          if (timerRefT2.current) { window.clearInterval(timerRefT2.current); timerRefT2.current = null; }
+          handleActionClickRefT2.current('Fold', true);
+          return 0;
+        }
+        return next;
+      });
+    }, 100);
+    return () => { if (timerRefT2.current) { window.clearInterval(timerRefT2.current); timerRefT2.current = null; } };
+  }, [isDual, timeBankSetting, feedbackT2, currentView]);
 
   const handleLogin = async (email: string, userId: string, isAdminFlag: boolean, isActiveFlag: boolean) => {
     setMultiLoginError(false);
@@ -1256,6 +1602,12 @@ const App: React.FC = () => {
     setHandHistory([]);
     handPoolRef.current = [];
     recentHandKeysRef.current = [];
+    // Reset T2 state for dual-table mode
+    handPoolRefT2.current = [];
+    recentHandKeysRefT2.current = [];
+    setPlayersT2([]);
+    setBoardT2([]);
+    setFeedbackT2('idle');
     const sessionId = crypto.randomUUID();
     trainingSessionIdRef.current = sessionId;
     setSessionElapsedSeconds(0);
@@ -1272,6 +1624,7 @@ const App: React.FC = () => {
         training_mode: goal.mode,
         goal_type: goal.type,
         goal_value: goal.value,
+        ...(tableCount > 1 ? { table_count: tableCount } : {}),
         is_active: true,
       }).then(({ error }) => {
         if (error) console.error('[training_sessions] Insert error:', error.message);
@@ -1765,11 +2118,15 @@ const App: React.FC = () => {
     return 'bottom';
   };
 
-  const renderActionButtons = () => {
-    let customActions = currentCustomActions.length > 0 ? currentCustomActions : (activeScenario?.customActions || ['Fold', 'Call', 'Raise', 'All-In']);
+  const renderActionButtonsFor = (
+    tActions: string[],
+    tBoard: string[],
+    onAction: (label: string) => void,
+    compact: boolean = false,
+  ) => {
+    let customActions = tActions.length > 0 ? tActions : (activeScenario?.customActions || ['Fold', 'Call', 'Raise', 'All-In']);
 
-    // Pós-flop: garantir que pelo menos Check e Fold apareçam como distractors
-    if (board.length > 0) {
+    if (tBoard.length > 0) {
       const augmented = [...customActions];
       if (!augmented.some(a => a.toLowerCase() === 'check' || a.toLowerCase().includes('check'))) augmented.push('Check');
       if (!augmented.some(a => a.toLowerCase() === 'fold' || a.toLowerCase().includes('fold'))) augmented.push('Fold');
@@ -1777,22 +2134,13 @@ const App: React.FC = () => {
     }
 
     const n = customActions.length;
-    
     let row1: string[] = [];
     let row2: string[] = [];
 
-    if (n <= 3) {
-      row1 = customActions;
-    } else if (n === 4) {
-      row1 = customActions.slice(0, 2);
-      row2 = customActions.slice(2, 4);
-    } else if (n === 5) {
-      row1 = customActions.slice(0, 3);
-      row2 = customActions.slice(3, 5);
-    } else {
-      row1 = customActions.slice(0, 3);
-      row2 = customActions.slice(3, 6);
-    }
+    if (n <= 3) { row1 = customActions; }
+    else if (n === 4) { row1 = customActions.slice(0, 2); row2 = customActions.slice(2, 4); }
+    else if (n === 5) { row1 = customActions.slice(0, 3); row2 = customActions.slice(3, 5); }
+    else { row1 = customActions.slice(0, 3); row2 = customActions.slice(3, 6); }
 
     const renderRow = (row: string[]) => (
       <div className="flex gap-2 w-full justify-center">
@@ -1800,11 +2148,10 @@ const App: React.FC = () => {
           const originalIdx = customActions.indexOf(label);
           const color = getActionColor(label, originalIdx);
           const baseWidth = (n === 4) ? 'w-[calc(50%-4px)]' : 'w-[calc(33.33%-6px)]';
-          
           return (
-            <button key={originalIdx} onClick={() => handleActionClick(label)} 
+            <button key={originalIdx} onClick={() => onAction(label)}
               style={{ backgroundColor: color, borderColor: 'rgba(255,255,255,0.2)' }}
-              className={`${baseWidth} h-8 md:h-10 px-1 rounded-lg border flex items-center justify-center transition-all active:scale-95 text-[9px] md:text-[10px] font-black uppercase tracking-wider text-white shadow-2xl hover:brightness-110 truncate`}>
+              className={`${baseWidth} ${compact ? 'h-7 text-[8px]' : 'h-8 md:h-10 text-[9px] md:text-[10px]'} px-1 rounded-lg border flex items-center justify-center transition-all active:scale-95 font-black uppercase tracking-wider text-white shadow-2xl hover:brightness-110 truncate`}>
               {label}
             </button>
           );
@@ -1813,9 +2160,124 @@ const App: React.FC = () => {
     );
 
     return (
-      <div className={`flex flex-col gap-1.5 md:gap-2 w-full ${isMobile ? 'max-w-[340px]' : 'max-w-[440px]'} px-2 items-center`}>
+      <div className={`flex flex-col gap-1.5 md:gap-2 w-full ${compact ? 'max-w-[360px]' : isMobile ? 'max-w-[340px]' : 'max-w-[440px]'} px-2 items-center`}>
         {renderRow(row1)}
         {row2.length > 0 && renderRow(row2)}
+      </div>
+    );
+  };
+
+  const renderActionButtons = () => renderActionButtonsFor(currentCustomActions, board, handleActionClick, false);
+
+  const renderFeedbackBanner = (fb: 'idle' | 'correct' | 'incorrect' | 'timeout', cFreq: number) => {
+    if (fb === 'correct') {
+      return (
+        <div className="py-3 px-6 rounded-full border font-black uppercase text-xs tracking-widest animate-in zoom-in duration-300 bg-green-600/20 border-green-500 text-green-400 shadow-[0_0_15px_rgba(34,197,94,0.3)] flex items-center gap-3">
+          <span>Decisão Correta</span>
+          <div className="flex gap-0.5 text-base leading-none">
+            {[1, 2, 3].map(i => {
+              const checks = cFreq >= 60 ? 3 : cFreq >= 30 ? 2 : 1;
+              return <span key={i} className={i <= checks ? 'text-green-400' : 'text-green-900'}>✓</span>;
+            })}
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className={`py-3 px-8 rounded-full border font-black uppercase text-xs tracking-widest animate-in zoom-in duration-300 ${fb === 'timeout' ? 'bg-orange-600/20 border-orange-500 text-orange-400 shadow-[0_0_15px_rgba(249,115,22,0.3)]' : 'bg-red-600/20 border-red-500 text-red-400 shadow-[0_0_15px_rgba(239,68,68,0.3)]'}`}>
+        {fb === 'timeout' ? 'Tempo Esgotado' : 'Decisão Errada'}
+      </div>
+    );
+  };
+
+  // Renders one poker table (used for both T1 and T2)
+  const renderPokerTable = (
+    tPlayers: Player[],
+    tBoard: string[],
+    tPot: number,
+    tFeedback: 'idle' | 'correct' | 'incorrect' | 'timeout',
+    tCorrectFreq: number,
+    tTimeRemaining: number,
+    tActions: string[],
+    onAction: (label: string) => void,
+    compact: boolean = false,
+    tableLabel?: string,
+  ) => {
+    const tPlayerCount = tPlayers.length || activeScenario?.playerCount || 9;
+    return (
+      <div className={`relative w-full ${compact ? 'max-w-[520px] aspect-[16/10]' : isMobile ? 'max-w-[400px] aspect-[9/13]' : 'max-w-[800px] aspect-[16/10]'} flex flex-col items-center justify-center select-none transition-all duration-500`}>
+        {tableLabel && (
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-full pb-1 z-30">
+            <span className="text-[9px] font-black uppercase tracking-[0.3em] text-gray-600">{tableLabel}</span>
+          </div>
+        )}
+        <div
+          className={`absolute inset-0 ${compact ? 'm-8 rounded-[80px]' : isMobile ? 'm-8 rounded-[110px]' : 'm-16 rounded-[120px]'}${tableStyle === 'classic' ? ' border-[8px] border-[#111111] shadow-[0_20px_60px_-15px_rgba(0,0,0,1)] bg-[#080808]' : ''}`}
+          style={tableStyle === 'premium' ? {
+            background: 'linear-gradient(160deg, #161610 0%, #0f0f0b 45%, #1a1a14 100%)',
+            boxShadow: '0 20px 80px rgba(0,0,0,0.95), 0 6px 20px rgba(0,0,0,0.8), inset 0 2px 5px rgba(220,185,80,0.18), inset 0 -2px 4px rgba(0,0,0,0.9)',
+            border: '1.5px solid rgba(195,155,55,0.28)',
+          } : {}}
+        >
+          <div
+            className={`absolute flex items-center justify-center overflow-hidden ${compact ? 'rounded-[70px]' : 'rounded-[100px]'}${tableStyle === 'classic' ? ' inset-1.5 bg-[radial-gradient(ellipse_at_center,_#6d0000_0%,_#3d0000_65%,_#0d0000_100%)]' : ''}`}
+            style={tableStyle === 'premium' ? {
+              inset: '13px',
+              background: 'radial-gradient(ellipse at 50% 44%, #1e4820 0%, #0f2812 40%, #050e06 100%)',
+              boxShadow: 'inset 0 10px 40px rgba(0,0,0,0.9), inset 0 0 28px rgba(0,0,0,0.7), inset 8px 0 24px rgba(0,0,0,0.85), inset -8px 0 24px rgba(0,0,0,0.85)',
+              border: '1px solid rgba(8,28,10,1)',
+            } : {}}
+          >
+            {tableStyle === 'premium' && <>
+              <div className="absolute inset-0 pointer-events-none rounded-[100px]" style={{ zIndex: 1, background: 'radial-gradient(ellipse at 50% 46%, transparent 24%, rgba(0,0,0,0.58) 70%, rgba(0,0,0,0.86) 100%)' }} />
+              <div className="absolute inset-0 pointer-events-none rounded-[100px]" style={{ zIndex: 1, background: 'linear-gradient(to bottom, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.14) 30%, transparent 52%)' }} />
+              <div className="absolute inset-0 pointer-events-none rounded-[100px]" style={{ zIndex: 1, background: 'radial-gradient(ellipse at 50% 40%, rgba(120,255,100,0.05) 0%, transparent 55%)' }} />
+              {!compact && (
+                <div className="absolute inset-0 pointer-events-none flex items-center justify-center" style={{ zIndex: 2 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', opacity: 0.18 }}>
+                    <div style={{ width: '48px', height: '1px', background: 'rgba(195,155,55,1)' }} />
+                    <span style={{ fontFamily: "'Inter', sans-serif", fontSize: compact ? '0.7rem' : '1rem', fontWeight: 700, letterSpacing: '0.5em', paddingLeft: '0.5em', color: 'rgba(195,155,55,1)', userSelect: 'none' }}>LAB11</span>
+                    <div style={{ width: '48px', height: '1px', background: 'rgba(195,155,55,1)' }} />
+                  </div>
+                </div>
+              )}
+            </>}
+            <div className={`absolute left-1/2 -translate-x-1/2 ${compact ? 'top-[30%] flex-col gap-3' : isMobile ? (tPlayerCount <= 4 ? 'top-[28%]' : 'top-[36%]') + ' flex-col-reverse gap-12' : 'top-[30%] flex-col gap-4'} z-20 flex items-center`}>
+              <div className="bg-black/90 px-3.5 py-1 rounded-full border border-red-500/30 flex items-center gap-1.5 shadow-2xl backdrop-blur-sm">
+                <span className="text-red-500 font-black text-[8px] tracking-widest uppercase">POT</span>
+                <span className={`text-white font-mono font-black ${compact ? 'text-xs' : 'text-sm'} tracking-tight leading-none whitespace-nowrap`}>{(tPot / BIG_BLIND_VALUE).toFixed(1)} BB</span>
+              </div>
+              {tBoard.length > 0 && (
+                <div className="flex gap-1.5 animate-in fade-in zoom-in duration-700">
+                  {tBoard.map((card, i) => {
+                    const rank = card.slice(0, -1);
+                    const suit = card.slice(-1).toLowerCase();
+                    const is4 = deckType === '4color';
+                    return (
+                      <div key={i}
+                        className={`${compact ? 'w-7 h-10' : 'w-10 h-14'} rounded-md shadow-2xl flex flex-col items-center justify-center leading-none font-bold border transform transition-transform hover:scale-105`}
+                        style={is4 ? { backgroundColor: SUIT_BG_4COLOR[suit] ?? '#fff', borderColor: SUIT_BORDER_4COLOR[suit] ?? '#e5e7eb' } : { backgroundColor: '#fff', borderColor: '#e5e7eb' }}
+                      >
+                        <span className={`${compact ? 'text-[12px]' : 'text-[16px]'} font-black ${is4 ? 'text-white' : getSuitColor(suit)}`}>{rank === 'T' ? '10' : rank}</span>
+                        <span className={`${compact ? 'text-[14px]' : 'text-[20px]'} ${is4 ? 'text-white' : getSuitColor(suit)}`}>{getSuitSymbol(suit)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="absolute inset-0 w-full h-full pointer-events-none z-10">
+          {tPlayers.map((player, index) => (
+            <div key={player.id} style={isMobile ? getMobilePlayerStyle(index, tPlayerCount) : getDesktopPlayerStyle(index, tPlayerCount)} className="absolute pointer-events-auto">
+              <PlayerSeat player={player} isMain={player.positionName === activeScenario?.heroPos} bigBlindValue={BIG_BLIND_VALUE} timeRemaining={player.positionName === activeScenario?.heroPos ? tTimeRemaining : 0} maxTime={(player.positionName === activeScenario?.heroPos && timeBankSetting !== 'OFF') ? (timeBankSetting as number) : 0} totalPlayers={tPlayerCount} isMobile={isMobile} deckType={deckType} className={`${getOrientationClass(index, isMobile, tPlayerCount)} ${compact ? (index === 0 ? 'scale-[0.72]' : 'scale-[0.65]') : (index === 0 ? (isMobile ? 'scale-[0.85]' : 'scale-[0.88]') : (isMobile ? 'scale-[0.72]' : 'scale-[0.82]'))}`} />
+            </div>
+          ))}
+        </div>
+        <div className={`${isMobile && !compact ? 'fixed bottom-0 left-0 right-0 pb-4 pt-3 bg-gradient-to-t from-[#050505] via-[#050505]/80 to-transparent' : compact ? 'absolute bottom-[-70px] w-full' : 'absolute bottom-[-110px] w-full'} flex justify-center z-50 px-4`}>
+          {tFeedback !== 'idle' ? renderFeedbackBanner(tFeedback, tCorrectFreq) : renderActionButtonsFor(tActions, tBoard, onAction, compact)}
+        </div>
       </div>
     );
   };
@@ -2096,108 +2558,20 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
-      <div className={`flex-1 relative flex flex-col items-center justify-center transition-all duration-300 ${!isMobile && sidebarOpen && !isFocusMode ? 'ml-80' : 'ml-0'} ${isMobile ? 'pb-[100px]' : ''}`}>
-        <div className={`relative w-full ${isMobile ? 'max-w-[400px] aspect-[9/13]' : 'max-w-[800px] aspect-[16/10]'} flex flex-col items-center justify-center select-none transition-all duration-500`}>
-          <div
-            className={`absolute inset-0 ${isMobile ? 'm-8 rounded-[110px]' : 'm-16 rounded-[120px]'}${tableStyle === 'classic' ? ' border-[8px] border-[#111111] shadow-[0_20px_60px_-15px_rgba(0,0,0,1)] bg-[#080808]' : ''}`}
-            style={tableStyle === 'premium' ? {
-              /* Rail: ébano / madeira escura com aro dourado — acabamento de alto nível */
-              background: 'linear-gradient(160deg, #161610 0%, #0f0f0b 45%, #1a1a14 100%)',
-              boxShadow: '0 20px 80px rgba(0,0,0,0.95), 0 6px 20px rgba(0,0,0,0.8), inset 0 2px 5px rgba(220,185,80,0.18), inset 0 -2px 4px rgba(0,0,0,0.9)',
-              border: '1.5px solid rgba(195,155,55,0.28)',
-            } : {}}
-          >
-            <div
-              className={`absolute flex items-center justify-center overflow-hidden rounded-[100px]${tableStyle === 'classic' ? ' inset-1.5 bg-[radial-gradient(ellipse_at_center,_#6d0000_0%,_#3d0000_65%,_#0d0000_100%)]' : ''}`}
-              style={tableStyle === 'premium' ? {
-                inset: '13px',
-                /* Felt: verde casino profundo — spotlight overhead suave no centro */
-                background: 'radial-gradient(ellipse at 50% 44%, #1e4820 0%, #0f2812 40%, #050e06 100%)',
-                boxShadow: 'inset 0 10px 40px rgba(0,0,0,0.9), inset 0 0 28px rgba(0,0,0,0.7), inset 8px 0 24px rgba(0,0,0,0.85), inset -8px 0 24px rgba(0,0,0,0.85)',
-                border: '1px solid rgba(8,28,10,1)',
-              } : {}}
-            >
-              {tableStyle === 'premium' && <>
-                {/* Vignette radial — bordas mergulhadas, centro vivo */}
-                <div className="absolute inset-0 pointer-events-none rounded-[100px]" style={{ zIndex: 1, background: 'radial-gradient(ellipse at 50% 46%, transparent 24%, rgba(0,0,0,0.58) 70%, rgba(0,0,0,0.86) 100%)' }} />
-                {/* Perspectiva suave — lado distante (topo) levemente mais escuro */}
-                <div className="absolute inset-0 pointer-events-none rounded-[100px]" style={{ zIndex: 1, background: 'linear-gradient(to bottom, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.14) 30%, transparent 52%)' }} />
-                {/* Spotlight overhead: luz de casino discreta acima da mesa */}
-                <div className="absolute inset-0 pointer-events-none rounded-[100px]" style={{ zIndex: 1, background: 'radial-gradient(ellipse at 50% 40%, rgba(120,255,100,0.05) 0%, transparent 55%)' }} />
-                {/* Marca d'água — gravada no feltro em ouro */}
-                <div className="absolute inset-0 pointer-events-none flex items-center justify-center" style={{ zIndex: 2 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '10px' : '16px', opacity: 0.18 }}>
-                    <div style={{ width: isMobile ? '28px' : '48px', height: '1px', background: 'rgba(195,155,55,1)' }} />
-                    <span style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: isMobile ? '0.75rem' : '1rem',
-                      fontWeight: 700,
-                      letterSpacing: '0.5em',
-                      paddingLeft: '0.5em',
-                      color: 'rgba(195,155,55,1)',
-                      userSelect: 'none',
-                    }}>LAB11</span>
-                    <div style={{ width: isMobile ? '28px' : '48px', height: '1px', background: 'rgba(195,155,55,1)' }} />
-                  </div>
-                </div>
-              </>}
-              <div className={`absolute left-1/2 -translate-x-1/2 ${isMobile ? (playerCount <= 4 ? 'top-[28%]' : 'top-[36%]') + ' flex-col-reverse gap-12' : 'top-[30%] flex-col gap-4'} z-20 flex items-center`}>
-                  <div className="bg-black/90 px-3.5 py-1 rounded-full border border-red-500/30 flex items-center gap-1.5 shadow-2xl backdrop-blur-sm">
-                    <span className="text-red-500 font-black text-[8px] tracking-widest uppercase">POT</span>
-                    <span className="text-white font-mono font-black text-sm tracking-tight leading-none whitespace-nowrap">{(currentPot / BIG_BLIND_VALUE).toFixed(1)} BB</span>
-                  </div>
-                  {board.length > 0 && (
-                    <div className="flex gap-1.5 animate-in fade-in zoom-in duration-700">
-                      {board.map((card, i) => {
-                        const rank = card.slice(0, -1);
-                        const suit = card.slice(-1).toLowerCase();
-                        const is4 = deckType === '4color';
-                        return (
-                          <div
-                            key={i}
-                            className="w-10 h-14 rounded-md shadow-2xl flex flex-col items-center justify-center leading-none font-bold border transform transition-transform hover:scale-105"
-                            style={is4
-                              ? { backgroundColor: SUIT_BG_4COLOR[suit] ?? '#fff', borderColor: SUIT_BORDER_4COLOR[suit] ?? '#e5e7eb' }
-                              : { backgroundColor: '#fff', borderColor: '#e5e7eb' }
-                            }
-                          >
-                            <span className={`text-[16px] font-black ${is4 ? 'text-white' : getSuitColor(suit)}`}>{rank === 'T' ? '10' : rank}</span>
-                            <span className={`text-[20px] ${is4 ? 'text-white' : getSuitColor(suit)}`}>{getSuitSymbol(suit)}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-              </div>
+      <div className={`flex-1 relative flex ${isDual ? 'flex-row items-center justify-center gap-4' : 'flex-col items-center justify-center'} transition-all duration-300 ${!isMobile && sidebarOpen && !isFocusMode ? 'ml-80' : 'ml-0'} ${isMobile ? 'pb-[100px]' : ''}`}>
+        {isDual ? (
+          <>
+            <div className="flex-1 flex items-center justify-center">
+              {renderPokerTable(players, board, currentPot, feedback, correctFreq, timeRemaining, currentCustomActions, handleActionClick, true, 'Mesa 1')}
             </div>
-          </div>
-          <div className="absolute inset-0 w-full h-full pointer-events-none z-10">
-            {players.map((player, index) => (
-              <div key={player.id} style={isMobile ? getMobilePlayerStyle(index, playerCount) : getDesktopPlayerStyle(index, playerCount)} className="absolute pointer-events-auto">
-                <PlayerSeat player={player} isMain={player.positionName === activeScenario?.heroPos} bigBlindValue={BIG_BLIND_VALUE} timeRemaining={player.positionName === activeScenario?.heroPos ? timeRemaining : 0} maxTime={(player.positionName === activeScenario?.heroPos && timeBankSetting !== 'OFF') ? (timeBankSetting as number) : 0} totalPlayers={playerCount} isMobile={isMobile} deckType={deckType} className={`${getOrientationClass(index, isMobile, playerCount)} ${index === 0 ? (isMobile ? 'scale-[0.85]' : 'scale-[0.88]') : (isMobile ? 'scale-[0.72]' : 'scale-[0.82]')}`} />
-              </div>
-            ))}
-          </div>
-          <div className={`${isMobile ? 'fixed bottom-0 left-0 right-0 pb-4 pt-3 bg-gradient-to-t from-[#050505] via-[#050505]/80 to-transparent' : 'absolute bottom-[-110px] w-full'} flex justify-center z-50 px-4`}>
-             {feedback !== 'idle' ? (
-               feedback === 'correct' ? (
-                 <div className="py-3 px-6 rounded-full border font-black uppercase text-xs tracking-widest animate-in zoom-in duration-300 bg-green-600/20 border-green-500 text-green-400 shadow-[0_0_15px_rgba(34,197,94,0.3)] flex items-center gap-3">
-                   <span>Decisão Correta</span>
-                   <div className="flex gap-0.5 text-base leading-none">
-                     {[1, 2, 3].map(i => {
-                       const checks = correctFreq >= 60 ? 3 : correctFreq >= 30 ? 2 : 1;
-                       return <span key={i} className={i <= checks ? 'text-green-400' : 'text-green-900'}>✓</span>;
-                     })}
-                   </div>
-                 </div>
-               ) : (
-                 <div className={`py-3 px-8 rounded-full border font-black uppercase text-xs tracking-widest animate-in zoom-in duration-300 ${feedback === 'timeout' ? 'bg-orange-600/20 border-orange-500 text-orange-400 shadow-[0_0_15px_rgba(249,115,22,0.3)]' : 'bg-red-600/20 border-red-500 text-red-400 shadow-[0_0_15px_rgba(239,68,68,0.3)]'}`}>
-                   {feedback === 'timeout' ? 'Tempo Esgotado' : 'Decisão Errada'}
-                 </div>
-               )
-             ) : renderActionButtons()}
-          </div>
-        </div>
+            <div className="w-px h-[60%] bg-white/5 shrink-0" />
+            <div className="flex-1 flex items-center justify-center">
+              {renderPokerTable(playersT2, boardT2, currentPotT2, feedbackT2, correctFreqT2, timeRemainingT2, currentCustomActionsT2, handleActionClickT2, true, 'Mesa 2')}
+            </div>
+          </>
+        ) : (
+          renderPokerTable(players, board, currentPot, feedback, correctFreq, timeRemaining, currentCustomActions, handleActionClick, false)
+        )}
       </div>
       <StopTrainingModal isOpen={showStopModal} onClose={() => setShowStopModal(false)} onConfirm={handleStopTrainingConfirm} />
       <SessionReportModal 
@@ -2215,7 +2589,7 @@ const App: React.FC = () => {
         description={activeScenario?.description}
         videoLink={activeScenario?.videoLink}
       />
-      <ConfigModal isOpen={showConfigModal} onClose={() => setShowConfigModal(false)} timeBank={timeBankSetting} setTimeBank={setTimeBankSetting} soundEnabled={soundEnabled} setSoundEnabled={setSoundEnabled} deckType={deckType} setDeckType={setDeckType} tableStyle={tableStyle} setTableStyle={setTableStyle} />
+      <ConfigModal isOpen={showConfigModal} onClose={() => setShowConfigModal(false)} timeBank={timeBankSetting} setTimeBank={setTimeBankSetting} soundEnabled={soundEnabled} setSoundEnabled={setSoundEnabled} deckType={deckType} setDeckType={setDeckType} tableStyle={tableStyle} setTableStyle={setTableStyle} tableCount={tableCount} setTableCount={setTableCount} />
       <ScenarioCreatorModal isOpen={showScenarioCreatorModal} scenarios={scenarios} onClose={() => setShowScenarioCreatorModal(false)} onSave={handleSaveScenario} onDelete={handleDeleteScenario} onTogglePublish={handleTogglePublish} isAdmin={isAdmin} />
       <AdminMemberModal isOpen={showAdminMemberModal} onClose={() => setShowAdminMemberModal(false)} />
     </div>

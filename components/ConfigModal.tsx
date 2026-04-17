@@ -6,6 +6,8 @@ export type TableStyle = 'classic' | 'premium';
 
 const SUIT_4COLOR: Record<string, string> = { h: '#dc2626', d: '#1d4ed8', c: '#15803d', s: '#111827' };
 
+export type TableCount = 1 | 2;
+
 interface ConfigModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -17,6 +19,8 @@ interface ConfigModalProps {
   setDeckType: (val: DeckType) => void;
   tableStyle: TableStyle;
   setTableStyle: (val: TableStyle) => void;
+  tableCount: TableCount;
+  setTableCount: (val: TableCount) => void;
 }
 
 const SUIT_SYMBOLS: Record<string, string> = { h: '♥', d: '♦', c: '♣', s: '♠' };
@@ -81,6 +85,8 @@ const ConfigModal: React.FC<ConfigModalProps> = ({
   setDeckType,
   tableStyle,
   setTableStyle,
+  tableCount,
+  setTableCount,
 }) => {
   if (!isOpen) return null;
 
@@ -205,6 +211,37 @@ const ConfigModal: React.FC<ConfigModalProps> = ({
                   }`}
                 >
                   {val ? 'ATIVO' : 'SILENCIOSO'}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {/* Quantidade de Mesas */}
+          <section>
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-1.5 h-1.5 bg-rose-500 rounded-full"></div>
+              <h3 className="text-white font-bold text-sm uppercase tracking-tight">Mesas Simultâneas</h3>
+            </div>
+            <p className="text-gray-500 text-[11px] mb-4 leading-relaxed">
+              Treine em 2 mesas ao mesmo tempo para aumentar o volume de mãos e simular multitabling.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {([1, 2] as TableCount[]).map((val) => (
+                <button
+                  key={val}
+                  onClick={() => setTableCount(val)}
+                  className={`py-3 rounded-xl border text-[10px] font-black transition-all flex flex-col items-center gap-2 ${
+                    tableCount === val
+                      ? 'bg-rose-600/20 border-rose-500 text-rose-300 shadow-[0_0_15px_rgba(244,63,94,0.2)]'
+                      : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+                  }`}
+                >
+                  <div className="flex gap-1">
+                    {Array.from({ length: val }).map((_, i) => (
+                      <div key={i} className={`w-8 h-5 rounded-[6px] border ${tableCount === val ? 'border-rose-400/50 bg-rose-900/30' : 'border-white/10 bg-white/5'}`} />
+                    ))}
+                  </div>
+                  <span className="uppercase tracking-widest">{val === 1 ? '1 Mesa' : '2 Mesas'}</span>
                 </button>
               ))}
             </div>
