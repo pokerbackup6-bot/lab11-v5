@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Player, PlayerStatus, TimeBankOption, HandRecord, Scenario, User, TrainingGoal, RangeData, TrainingMode } from './types.ts';
-import { buildHandPool } from './utils/pokerUtils.ts';
+import { buildHandPool, dealOpponentAction } from './utils/pokerUtils.ts';
 import { SYSTEM_DEFAULT_SCENARIOS } from './defaultScenarios.ts';
 import PlayerSeat from './components/PlayerSeat.tsx';
 import Sidebar from './components/Sidebar.tsx';
@@ -159,6 +159,9 @@ const scenarioToDb = (s: Scenario, isDefault = false) => ({
   custom_actions: s.customActions ?? [],
   is_system_default: isDefault,
   is_published: s.isPublished ?? true,
+  opponent_ranges: s.opponentRanges ?? null,
+  opponent_actions: s.opponentActions ?? [],
+  hero_ranges_by_action: s.heroRangesByAction ?? null,
 });
 
 const dbToScenario = (row: any): Scenario => ({
@@ -181,6 +184,9 @@ const dbToScenario = (row: any): Scenario => ({
   ranges: row.ranges ?? {},
   customActions: row.custom_actions ?? [],
   isPublished: row.is_published ?? true,
+  opponentRanges: row.opponent_ranges ?? undefined,
+  opponentActions: row.opponent_actions ?? undefined,
+  heroRangesByAction: row.hero_ranges_by_action ?? undefined,
   variants: row.scenario_variants
     ?.sort((a: any, b: any) => a.sort_order - b.sort_order)
     .map((v: any) => ({
@@ -189,6 +195,9 @@ const dbToScenario = (row: any): Scenario => ({
       ranges: v.ranges ?? {},
       customActions: v.custom_actions ?? [],
       isDuplicate: v.is_duplicate ?? false,
+      opponentRanges: v.opponent_ranges ?? undefined,
+      opponentActions: v.opponent_actions ?? undefined,
+      heroRangesByAction: v.hero_ranges_by_action ?? undefined,
     })),
 });
 
@@ -251,28 +260,42 @@ const getActionColor = (label: string, index: number): string => {
   return CUSTOM_PALETTE[index % CUSTOM_PALETTE.length];
 };
 
-const generateCardsFromKey = (key: string): string[] => {
+const generateCardsFromKey = (key: string, excludeCards?: Set<string>): string[] => {
+  const excluded = excludeCards || new Set<string>();
+  const maxRetries = 50;
+
   if (key.length === 4) return [key.substring(0, 2), key.substring(2, 4)];
-  if (key.length === 2 && key[0] === key[1]) {
-    const rank = key[0];
-    const s1 = SUITS[Math.floor(Math.random() * SUITS.length)];
-    let s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
-    while (s1 === s2) s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
-    return [rank + s1, rank + s2];
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    let c1: string, c2: string;
+
+    if (key.length === 2 && key[0] === key[1]) {
+      const rank = key[0];
+      const s1 = SUITS[Math.floor(Math.random() * SUITS.length)];
+      let s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
+      while (s1 === s2) s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
+      c1 = rank + s1; c2 = rank + s2;
+    } else if (key.endsWith('s')) {
+      const r1 = key[0]; const r2 = key[1];
+      const suit = SUITS[Math.floor(Math.random() * SUITS.length)];
+      c1 = r1 + suit; c2 = r2 + suit;
+    } else if (key.endsWith('o')) {
+      const r1 = key[0]; const r2 = key[1];
+      const s1 = SUITS[Math.floor(Math.random() * SUITS.length)];
+      let s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
+      while (s1 === s2) s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
+      c1 = r1 + s1; c2 = r2 + s2;
+    } else {
+      return ['As', 'Ad'];
+    }
+
+    if (!excluded.has(c1) && !excluded.has(c2)) return [c1, c2];
   }
-  if (key.endsWith('s')) {
-    const r1 = key[0]; const r2 = key[1];
-    const suit = SUITS[Math.floor(Math.random() * SUITS.length)];
-    return [r1 + suit, r2 + suit];
-  }
-  if (key.endsWith('o')) {
-    const r1 = key[0]; const r2 = key[1];
-    const s1 = SUITS[Math.floor(Math.random() * SUITS.length)];
-    let s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
-    while (s1 === s2) s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
-    return [r1 + s1, r2 + s2];
-  }
-  return ['As', 'Ad'];
+
+  // Fallback
+  if (key.length === 2 && key[0] === key[1]) return [key[0] + 'h', key[0] + 'd'];
+  if (key.endsWith('s')) return [key[0] + 'h', key[1] + 'h'];
+  return [key[0] + 'h', key[1] + 'd'];
 };
 
 const getActiveHandsFromRange = (ranges: RangeData): string[] => {
@@ -548,6 +571,8 @@ const App: React.FC = () => {
   const [currentHandKey, setCurrentHandKey] = useState<string | null>(null);
   const [currentRanges, setCurrentRanges] = useState<RangeData | null>(null);
   const [currentCustomActions, setCurrentCustomActions] = useState<string[]>([]);
+  const [currentOpponentAction, setCurrentOpponentAction] = useState<string | null>(null);
+  const [currentOpponentHandKey, setCurrentOpponentHandKey] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarPinned, setSidebarPinned] = useState(() => localStorage.getItem('gto_sidebar_pinned') === 'true');
@@ -771,11 +796,79 @@ const App: React.FC = () => {
       return;
     }
 
+    // -----------------------------------------------------------------------
+    // Opponent Ranges: determinar ação dinâmica do oponente
+    // -----------------------------------------------------------------------
+    const variant = (variantId && activeScenario.variants)
+      ? activeScenario.variants.find(v => v.id === variantId) : null;
+
+    const effectiveOpponentRanges = variant?.opponentRanges || activeScenario.opponentRanges;
+    const effectiveHeroRangesByAction = variant?.heroRangesByAction || activeScenario.heroRangesByAction;
+    const hasOpponentRanges = effectiveOpponentRanges && effectiveHeroRangesByAction
+      && Object.keys(effectiveOpponentRanges).length > 0
+      && Object.keys(effectiveHeroRangesByAction).length > 0;
+
+    let resolvedOpponentAction: string | null = null;
+    let resolvedOpponentHandKey: string | null = null;
+    let heroRangeForAction: RangeData = effectiveRanges;
+    let heroActionsForAction: string[] = effectiveActions;
+    const excludedCards = new Set<string>();
+
+    if (hasOpponentRanges) {
+      // 1. Sorteia mão do oponente e determina ação
+      const oppResult = dealOpponentAction(effectiveOpponentRanges);
+      if (!oppResult) {
+        console.warn('[Opponent Range] Nenhuma mão ativa no range do oponente.');
+        // Fallback: usa lógica padrão (ação fixa)
+      } else {
+        resolvedOpponentAction = oppResult.action;
+        resolvedOpponentHandKey = oppResult.handKey;
+
+        // 2. Seleciona range do hero para essa ação do oponente
+        const heroRange = effectiveHeroRangesByAction[oppResult.action];
+        if (heroRange && Object.keys(heroRange).length > 0) {
+          heroRangeForAction = heroRange;
+          effectiveRanges = heroRange;
+
+          // 3. Gera cartas do oponente (para exclusão de conflito)
+          const oppCards = generateCardsFromKey(oppResult.handKey);
+          oppCards.forEach(c => excludedCards.add(c));
+
+          // Adiciona board ao set de exclusão
+          if (isPostFlop && effectiveBoard) {
+            effectiveBoard.forEach(c => { if (c) excludedCards.add(c); });
+          }
+
+          // 4. Seleciona mão do hero do range correspondente
+          const activeHeroHands = getActiveHandsFromRange(heroRange);
+          if (activeHeroHands.length > 0) {
+            handKey = activeHeroHands[Math.floor(Math.random() * activeHeroHands.length)];
+          }
+
+          // 5. Ações do hero para esta ação do oponente
+          const oppActionsConfig = variant?.opponentActions || activeScenario.opponentActions;
+          // As custom actions do hero vêm das chaves do heroRange (as ações definidas no range)
+          const heroActionKeys = new Set<string>();
+          Object.values(heroRange).forEach(freq => {
+            Object.keys(freq).forEach(a => heroActionKeys.add(a));
+          });
+          if (heroActionKeys.size > 0) {
+            heroActionsForAction = Array.from(heroActionKeys);
+          }
+        } else {
+          // Sem range do hero para esta ação — fallback para range padrão
+          resolvedOpponentAction = null;
+        }
+      }
+    }
+
+    setCurrentOpponentAction(resolvedOpponentAction);
+    setCurrentOpponentHandKey(resolvedOpponentHandKey);
     setCurrentHandKey(handKey);
     setCurrentRanges(effectiveRanges);
-    setCurrentCustomActions(effectiveActions);
+    setCurrentCustomActions(heroActionsForAction);
 
-    const heroCards = generateCardsFromKey(handKey);
+    const heroCards = generateCardsFromKey(handKey, excludedCards.size > 0 ? excludedCards : undefined);
 
     const count = activeScenario.playerCount;
     const tablePositions = getTablePositions(count);
@@ -788,42 +881,52 @@ const App: React.FC = () => {
 
     const isIsoAction = activeScenario.preflopAction.toLowerCase() === 'iso';
     const opponentBetVal = activeScenario.opponentBetSize || 0;
-    
+    // Para opponent ranges dinâmicos, extrair o tamanho do bet da ação
+    const dynamicOpponentBetVal = resolvedOpponentAction
+      ? (() => { const m = resolvedOpponentAction!.match(/(\d+\.?\d*)/); return m ? parseFloat(m[0]) : opponentBetVal; })()
+      : opponentBetVal;
+
     const scenarioPlayers: Player[] = tablePositions.map((posName, i) => {
       const isHero = posName === activeScenario.heroPos;
       const isOpponent = activeScenario.opponents.includes(posName);
       const orderIndex = preflopOrder.indexOf(posName);
-      
+
       let status = PlayerStatus.IDLE;
       let betAmount = 0;
       let hasCards = false;
-      let lastAction = undefined;
+      let lastAction: string | undefined = undefined;
 
       if (isPostFlop) {
-        // No Post-Flop, assumimos que os envolvidos têm cartas e o pote já tem as blinds/bets do preflop
         if (isHero || isOpponent) hasCards = true;
         else status = PlayerStatus.FOLDED;
 
         if (isHero) status = PlayerStatus.ACTING;
-        
-        if (isOpponent && activeScenario.opponentAction) {
-          lastAction = activeScenario.opponentAction.toUpperCase();
+
+        if (isOpponent) {
+          const oppAction = resolvedOpponentAction || activeScenario.opponentAction;
+          if (oppAction) lastAction = oppAction.toUpperCase();
         }
-        
+
         betAmount = 0;
       } else {
-        // Lógica PREFLOP original
         if (isIsoAction && isOpponent) {
           betAmount = BIG_BLIND_VALUE;
           status = PlayerStatus.IDLE;
           hasCards = true;
-        } 
-        else if (!isIsoAction && isOpponent && activeScenario.opponents[0] === posName && opponentBetVal > 0) {
-          betAmount = opponentBetVal * BIG_BLIND_VALUE;
-          status = PlayerStatus.IDLE;
-          hasCards = true;
         }
-        
+        else if (!isIsoAction && isOpponent && activeScenario.opponents[0] === posName) {
+          const betVal = resolvedOpponentAction ? dynamicOpponentBetVal : opponentBetVal;
+          if (betVal > 0) {
+            betAmount = betVal * BIG_BLIND_VALUE;
+            status = PlayerStatus.IDLE;
+            hasCards = true;
+          }
+          // Mostra ação dinâmica do oponente no preflop
+          if (resolvedOpponentAction) {
+            lastAction = resolvedOpponentAction.toUpperCase();
+          }
+        }
+
         if (orderIndex < heroOrderIndex && orderIndex !== -1) {
           if (!isOpponent) status = PlayerStatus.FOLDED;
         } else if (isHero) {
@@ -1039,6 +1142,8 @@ const App: React.FC = () => {
         is_correct:          isCorrect,
         is_timeout:          isTimeout,
         correct_freq:        clickedFreq,
+        opponent_action:     currentOpponentAction || null,
+        opponent_hand_key:   currentOpponentHandKey || null,
       }).then(({ error }) => {
         if (error) console.error('[hand_history] Erro ao salvar:', error.message);
       });
@@ -1203,6 +1308,9 @@ const App: React.FC = () => {
           custom_actions: v.customActions ?? [],
           is_duplicate: v.isDuplicate ?? false,
           sort_order: i,
+          opponent_ranges: v.opponentRanges ?? null,
+          opponent_actions: v.opponentActions ?? [],
+          hero_ranges_by_action: v.heroRangesByAction ?? null,
         }))
       );
       if (varErr) console.error('[Save] Variants falhou:', varErr);
@@ -1324,6 +1432,9 @@ const App: React.FC = () => {
               custom_actions: v.customActions ?? [],
               is_duplicate: v.isDuplicate ?? false,
               sort_order: i,
+              opponent_ranges: v.opponentRanges ?? null,
+              opponent_actions: v.opponentActions ?? [],
+              hero_ranges_by_action: v.heroRangesByAction ?? null,
             }))
           );
         }

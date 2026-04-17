@@ -47,6 +47,9 @@ export interface BoardVariant {
   ranges: RangeData;
   customActions?: string[];
   isDuplicate?: boolean;
+  opponentRanges?: RangeData;
+  opponentActions?: string[];
+  heroRangesByAction?: Record<string, RangeData>;
 }
 
 export interface Scenario {
@@ -70,6 +73,10 @@ export interface Scenario {
   description?: string;
   videoLink?: string;
   isPublished?: boolean; // false = rascunho (não aparece no treino), true = publicado
+  // Range dinâmico do oponente: determina ação do vilão com base na mão dele
+  opponentRanges?: RangeData;
+  opponentActions?: string[]; // Ações possíveis do oponente (ex: ['RAISE 2.2', 'ALL-IN'])
+  heroRangesByAction?: Record<string, RangeData>; // Range do hero por ação do oponente
 }
 
 export interface User {

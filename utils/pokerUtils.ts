@@ -51,28 +51,79 @@ export const getActionColor = (label: string, index: number): string => {
   return CUSTOM_PALETTE[index % CUSTOM_PALETTE.length];
 };
 
-export const generateCardsFromKey = (key: string): string[] => {
+export const generateCardsFromKey = (key: string, excludeCards?: Set<string>): string[] => {
+  const excluded = excludeCards || new Set<string>();
+  const maxRetries = 50;
+
   if (key.length === 4) return [key.substring(0, 2), key.substring(2, 4)];
-  if (key.length === 2 && key[0] === key[1]) {
-    const rank = key[0];
-    const s1 = SUITS[Math.floor(Math.random() * SUITS.length)];
-    let s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
-    while (s1 === s2) s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
-    return [rank + s1, rank + s2];
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    let c1: string, c2: string;
+
+    if (key.length === 2 && key[0] === key[1]) {
+      const rank = key[0];
+      const s1 = SUITS[Math.floor(Math.random() * SUITS.length)];
+      let s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
+      while (s1 === s2) s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
+      c1 = rank + s1; c2 = rank + s2;
+    } else if (key.endsWith('s')) {
+      const r1 = key[0]; const r2 = key[1];
+      const suit = SUITS[Math.floor(Math.random() * SUITS.length)];
+      c1 = r1 + suit; c2 = r2 + suit;
+    } else if (key.endsWith('o')) {
+      const r1 = key[0]; const r2 = key[1];
+      const s1 = SUITS[Math.floor(Math.random() * SUITS.length)];
+      let s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
+      while (s1 === s2) s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
+      c1 = r1 + s1; c2 = r2 + s2;
+    } else {
+      return ['As', 'Ad'];
+    }
+
+    if (!excluded.has(c1) && !excluded.has(c2)) return [c1, c2];
   }
-  if (key.endsWith('s')) {
-    const r1 = key[0]; const r2 = key[1];
-    const suit = SUITS[Math.floor(Math.random() * SUITS.length)];
-    return [r1 + suit, r2 + suit];
+
+  // Fallback: retorna sem checagem (raro)
+  if (key.length === 2 && key[0] === key[1]) return [key[0] + 'h', key[0] + 'd'];
+  if (key.endsWith('s')) return [key[0] + 'h', key[1] + 'h'];
+  return [key[0] + 'h', key[1] + 'd'];
+};
+
+// ---------------------------------------------------------------------------
+// Opponent Range: sorteia mão do oponente e determina ação via frequência
+// ---------------------------------------------------------------------------
+export const dealOpponentAction = (
+  opponentRanges: RangeData
+): { handKey: string; action: string } | null => {
+  // Filtra mãos com pelo menos uma ação não-Fold
+  const activeHands = Object.keys(opponentRanges).filter(key => {
+    const freq = opponentRanges[key];
+    const nonFoldTotal = Object.entries(freq)
+      .filter(([action]) => !action.toLowerCase().includes('fold'))
+      .reduce((sum, [, f]) => sum + (f as number), 0);
+    return nonFoldTotal > 0;
+  });
+
+  if (activeHands.length === 0) return null;
+
+  // Sorteia mão aleatória
+  const handKey = activeHands[Math.floor(Math.random() * activeHands.length)];
+
+  // Seleção ponderada da ação (exclui Fold)
+  const freqs = opponentRanges[handKey];
+  const entries = Object.entries(freqs).filter(
+    ([action]) => !action.toLowerCase().includes('fold')
+  ) as [string, number][];
+
+  if (entries.length === 0) return null;
+
+  const total = entries.reduce((s, [, f]) => s + f, 0);
+  let r = Math.random() * total;
+  for (const [action, freq] of entries) {
+    r -= freq;
+    if (r <= 0) return { handKey, action };
   }
-  if (key.endsWith('o')) {
-    const r1 = key[0]; const r2 = key[1];
-    const s1 = SUITS[Math.floor(Math.random() * SUITS.length)];
-    let s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
-    while (s1 === s2) s2 = SUITS[Math.floor(Math.random() * SUITS.length)];
-    return [r1 + s1, r2 + s2];
-  }
-  return ['As', 'Ad'];
+  return { handKey, action: entries[0][0] };
 };
 
 export const getActiveHandsFromRange = (ranges: RangeData): string[] => {

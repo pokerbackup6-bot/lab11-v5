@@ -67,6 +67,14 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
 
   const [isPublished, setIsPublished] = useState(true);
 
+  // Opponent Range mode
+  const [useOpponentRanges, setUseOpponentRanges] = useState(false);
+  const [opponentRangeData, setOpponentRangeData] = useState<RangeData>({});
+  const [opponentCustomActions, setOpponentCustomActions] = useState<string[]>([]);
+  const [heroRangesByActionData, setHeroRangesByActionData] = useState<Record<string, RangeData>>({});
+  const [editingRangeTarget, setEditingRangeTarget] = useState<'hero' | 'opponent' | string>('hero');
+  const [newOpponentActionInput, setNewOpponentActionInput] = useState('');
+
   const [rangeData, setRangeData] = useState<RangeData>({});
   const [variants, setVariants] = useState<BoardVariant[]>([]);
   const [activeVariantId, setActiveVariantId] = useState<string | null>(null);
@@ -97,14 +105,40 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
 
   // Helper para atualizar o range e sincronizar com as variantes
   const updateRangeData = (updater: (prev: RangeData) => RangeData) => {
-    setRangeData(prev => {
-      const next = updater(prev);
-      if (activeVariantId && street !== 'PREFLOP') {
-        setVariants(vPrev => vPrev.map(v => v.id === activeVariantId ? { ...v, ranges: next } : v));
-      }
-      return next;
-    });
+    if (useOpponentRanges && editingRangeTarget === 'opponent') {
+      setOpponentRangeData(prev => updater(prev));
+    } else if (useOpponentRanges && editingRangeTarget !== 'hero' && editingRangeTarget !== 'opponent') {
+      // Editing hero range for a specific opponent action
+      const actionKey = editingRangeTarget;
+      setHeroRangesByActionData(prev => ({
+        ...prev,
+        [actionKey]: updater(prev[actionKey] || {}),
+      }));
+    } else {
+      setRangeData(prev => {
+        const next = updater(prev);
+        if (activeVariantId && street !== 'PREFLOP') {
+          setVariants(vPrev => vPrev.map(v => v.id === activeVariantId ? { ...v, ranges: next } : v));
+        }
+        return next;
+      });
+    }
   };
+
+  // Range e ações ativos baseado no target de edição
+  const activeRangeData = useOpponentRanges
+    ? (editingRangeTarget === 'opponent'
+        ? opponentRangeData
+        : editingRangeTarget !== 'hero'
+          ? (heroRangesByActionData[editingRangeTarget] || {})
+          : rangeData)
+    : rangeData;
+
+  const activeCustomActions = useOpponentRanges
+    ? (editingRangeTarget === 'opponent'
+        ? opponentCustomActions
+        : customActions)
+    : customActions;
   const [selectedAction, setSelectedAction] = useState<string>('');
   const [selectedFrequency, setSelectedFrequency] = useState(100);
   const [isEraserMode, setIsEraserMode] = useState(false);
@@ -365,14 +399,15 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     const interval = setInterval(() => {
       const draft = {
         currentId, name, description, videoLink, modality, street, action,
-        playerCount, heroPos, opponents, stackBB, heroBetSize, opponentBetSize, initialPotBB, board, opponentAction, customActions, rangeData, variants, activeVariantId, step
+        playerCount, heroPos, opponents, stackBB, heroBetSize, opponentBetSize, initialPotBB, board, opponentAction, customActions, rangeData, variants, activeVariantId, step,
+        useOpponentRanges, opponentRangeData, opponentCustomActions, heroRangesByActionData
       };
       localStorage.setItem(SCENARIO_DRAFT_KEY, JSON.stringify(draft));
       setLastAutosave(new Date());
     }, 60000);
 
     return () => clearInterval(interval);
-  }, [isOpen, step, currentId, name, description, videoLink, modality, street, action, playerCount, heroPos, opponents, stackBB, heroBetSize, opponentBetSize, customActions, rangeData, variants, activeVariantId]);
+  }, [isOpen, step, currentId, name, description, videoLink, modality, street, action, playerCount, heroPos, opponents, stackBB, heroBetSize, opponentBetSize, customActions, rangeData, variants, activeVariantId, useOpponentRanges, opponentRangeData, opponentCustomActions, heroRangesByActionData]);
 
   useEffect(() => {
     if (isOpen && !name) {
@@ -392,6 +427,10 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
             setCustomActions(d.customActions || []); setRangeData(d.rangeData || {});
             setVariants(d.variants || []); setActiveVariantId(d.activeVariantId || null);
             setStep(d.step || 1);
+            setUseOpponentRanges(d.useOpponentRanges || false);
+            setOpponentRangeData(d.opponentRangeData || {});
+            setOpponentCustomActions(d.opponentCustomActions || []);
+            setHeroRangesByActionData(d.heroRangesByActionData || {});
           } catch (e) { console.error('Falha ao restaurar rascunho', e); }
         } else {
           localStorage.removeItem(SCENARIO_DRAFT_KEY);
@@ -473,6 +512,13 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     }
     setCustomActions(s.customActions || []);
     setIsPublished(s.isPublished ?? true);
+    // Opponent range state
+    const hasOppRanges = s.opponentRanges && Object.keys(s.opponentRanges).length > 0;
+    setUseOpponentRanges(!!hasOppRanges);
+    setOpponentRangeData(s.opponentRanges || {});
+    setOpponentCustomActions(s.opponentActions || []);
+    setHeroRangesByActionData(s.heroRangesByAction || {});
+    setEditingRangeTarget('hero');
     setStep(1);
   };
 
@@ -504,6 +550,13 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     }
     setCustomActions([...(s.customActions || [])]);
     setIsPublished(false); // Cópia começa como rascunho
+    // Opponent range state
+    const hasOppRanges = s.opponentRanges && Object.keys(s.opponentRanges).length > 0;
+    setUseOpponentRanges(!!hasOppRanges);
+    setOpponentRangeData(JSON.parse(JSON.stringify(s.opponentRanges || {})));
+    setOpponentCustomActions([...(s.opponentActions || [])]);
+    setHeroRangesByActionData(JSON.parse(JSON.stringify(s.heroRangesByAction || {})));
+    setEditingRangeTarget('hero');
     setStep(1);
   };
 
@@ -512,9 +565,10 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
   }, []);
 
   const availableRangeActions = useMemo(() => {
-    if (customActions.length > 0) return customActions;
+    const actions = activeCustomActions.length > 0 ? activeCustomActions : customActions;
+    if (actions.length > 0) return actions;
     return ['Fold', 'Call', 'Raise'].filter(a => a !== '');
-  }, [customActions]);
+  }, [customActions, activeCustomActions]);
 
   const updateHandAction = (draft: RangeData, hand: string, actionName: string, freq: number, accumulate = false) => {
     const current = draft[hand] || {};
@@ -606,7 +660,8 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     const comboMap: Record<string, ActionFrequency> = {};
     
     // Primeiro, preenchemos com o dado genérico se existir
-    const handData = rangeData[handKey];
+    const currentRange = activeRangeData;
+    const handData = currentRange[handKey];
     if (handData) {
       possibleCombos.forEach(c => {
         comboMap[c] = Object.assign({}, handData);
@@ -614,7 +669,7 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     }
 
     // Depois, sobrepomos com dados de combos específicos se existirem
-    Object.entries(rangeData).forEach(([k, data]) => {
+    Object.entries(currentRange).forEach(([k, data]) => {
       // Normaliza o combo para comparação
       const normalizedK = k.replace(/10/g, 'T');
       if (normalizedK.length !== 4) return;
@@ -951,6 +1006,11 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
       variants: isPostFlop ? variants : undefined,
       customActions,
       isPublished: publishState,
+      ...(useOpponentRanges && Object.keys(opponentRangeData).length > 0 ? {
+        opponentRanges: opponentRangeData,
+        opponentActions: opponentCustomActions,
+        heroRangesByAction: heroRangesByActionData,
+      } : {}),
     };
   };
 
@@ -958,6 +1018,8 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     localStorage.removeItem(SCENARIO_DRAFT_KEY);
     onClose(); setStep(1); setRangeData({}); setVariants([]); setActiveVariantId(null); setCurrentId(`sc-${Date.now()}`);
     setName(''); setDescription(''); setVideoLink(''); setIsPublished(true);
+    setUseOpponentRanges(false); setOpponentRangeData({}); setOpponentCustomActions([]);
+    setHeroRangesByActionData({}); setEditingRangeTarget('hero'); setNewOpponentActionInput('');
   };
 
   const handleFinish = () => {
@@ -1232,6 +1294,84 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
                </div>
             </div>
 
+            {/* Ação Dinâmica do Oponente (Opponent Range Mode) */}
+            <div className="space-y-4 col-span-full bg-violet-500/5 p-8 rounded-[32px] border border-violet-500/20">
+              <div className="flex justify-between items-center mb-2">
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 bg-violet-500 rounded-full"></div>
+                  <label className="text-[11px] text-violet-400 font-black uppercase tracking-widest">Ação Dinâmica do Oponente</label>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setUseOpponentRanges(!useOpponentRanges)}
+                  className={`relative w-14 h-7 rounded-full transition-all duration-300 ${useOpponentRanges ? 'bg-violet-600' : 'bg-white/10'}`}
+                >
+                  <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-300 ${useOpponentRanges ? 'left-7' : 'left-0.5'}`}></div>
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-500 font-bold leading-relaxed">
+                Quando ativado, o oponente terá um range próprio e suas ações variam por mão. O herói responde com ranges diferentes para cada ação do oponente.
+              </p>
+
+              {useOpponentRanges && (
+                <div className="mt-4 space-y-4 animate-in slide-in-from-top-2 duration-300">
+                  <label className="text-[10px] text-violet-300 font-black uppercase tracking-widest block">Ações do Oponente</label>
+                  <div className="flex flex-wrap gap-3 mb-4">
+                    {opponentCustomActions.map((act, idx) => (
+                      <div key={idx} className="flex items-center gap-3 bg-black/40 border border-violet-500/20 px-5 py-3 rounded-2xl transition-all hover:border-violet-500/40">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: getActionColor(act, idx) }}></div>
+                        <span className="text-[11px] font-black text-white uppercase tracking-wider">{act}</span>
+                        <button onClick={() => {
+                          const newActions = opponentCustomActions.filter(a => a !== act);
+                          setOpponentCustomActions(newActions);
+                          // Remove hero range for this action too
+                          setHeroRangesByActionData(prev => {
+                            const next = { ...prev };
+                            delete next[act];
+                            return next;
+                          });
+                          if (editingRangeTarget === act) setEditingRangeTarget('hero');
+                        }} className="ml-2 text-gray-600 hover:text-red-500 transition-colors">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                        </button>
+                      </div>
+                    ))}
+                    {opponentCustomActions.length === 0 && <p className="text-[10px] text-gray-600 font-bold uppercase italic p-2">Adicione as ações possíveis (ex: RAISE 2.2, ALL-IN, FOLD)</p>}
+                  </div>
+                  <div className="flex gap-3">
+                    <input
+                      type="text"
+                      value={newOpponentActionInput}
+                      onChange={(e) => setNewOpponentActionInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          if (newOpponentActionInput.trim() && !opponentCustomActions.includes(newOpponentActionInput.trim())) {
+                            setOpponentCustomActions(prev => [...prev, newOpponentActionInput.trim()]);
+                            setNewOpponentActionInput('');
+                          }
+                        }
+                      }}
+                      placeholder="Adicionar ação do oponente (ex: RAISE 2.2)"
+                      className="flex-1 bg-black/60 border border-white/10 rounded-2xl py-4 px-6 text-white text-xs font-bold outline-none focus:border-violet-500/50 shadow-inner"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (newOpponentActionInput.trim() && !opponentCustomActions.includes(newOpponentActionInput.trim())) {
+                          setOpponentCustomActions(prev => [...prev, newOpponentActionInput.trim()]);
+                          setNewOpponentActionInput('');
+                        }
+                      }}
+                      className="px-8 py-4 bg-violet-600 border border-violet-400 rounded-2xl text-white font-black text-[10px] uppercase tracking-widest hover:bg-violet-500 transition-all shadow-xl active:scale-95"
+                    >
+                      Adicionar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {isReRaiseAction && (
               <div className="bg-orange-500/5 border border-orange-500/20 p-8 rounded-[32px] space-y-4 animate-in slide-in-from-top-4 duration-500">
                 <div className="flex items-center gap-3 mb-2">
@@ -1451,6 +1591,43 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
             )}
 
              <div className="flex-1 bg-black/60 rounded-[40px] border border-white/5 p-8 flex flex-col items-center justify-center shadow-inner relative group min-h-[600px]">
+              {/* Opponent Range Tab Navigation */}
+              {useOpponentRanges && opponentCustomActions.length > 0 && (
+                <div className="w-full max-w-[650px] mb-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingRangeTarget('opponent')}
+                    className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${editingRangeTarget === 'opponent' ? 'bg-violet-600 border-violet-400 text-white shadow-lg' : 'bg-white/5 border border-white/10 text-gray-500 hover:bg-white/10'}`}
+                  >
+                    Range do Oponente
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingRangeTarget('hero')}
+                    className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${editingRangeTarget === 'hero' ? 'bg-sky-600 border-sky-400 text-white shadow-lg' : 'bg-white/5 border border-white/10 text-gray-500 hover:bg-white/10'}`}
+                  >
+                    Range Padrão Hero
+                  </button>
+                  {opponentCustomActions.filter(a => !a.toLowerCase().includes('fold')).map(act => (
+                    <button
+                      key={act}
+                      type="button"
+                      onClick={() => setEditingRangeTarget(act)}
+                      className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${editingRangeTarget === act ? 'bg-emerald-600 border-emerald-400 text-white shadow-lg' : 'bg-white/5 border border-white/10 text-gray-500 hover:bg-white/10'}`}
+                    >
+                      Hero vs {act}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {/* Tab indicator label */}
+              {useOpponentRanges && editingRangeTarget !== 'hero' && (
+                <div className="w-full max-w-[650px] mb-2">
+                  <span className={`text-[10px] font-black uppercase tracking-widest ${editingRangeTarget === 'opponent' ? 'text-violet-400' : 'text-emerald-400'}`}>
+                    {editingRangeTarget === 'opponent' ? 'Pintando: Range do Oponente' : `Pintando: Hero vs ${editingRangeTarget}`}
+                  </span>
+                </div>
+              )}
               <div onContextMenu={(e) => e.preventDefault()} className="grid grid-cols-13 gap-0 aspect-square w-full max-w-[650px] shadow-2xl overflow-hidden rounded-lg bg-[#111]">
                 {RANKS.map((r1, row) => RANKS.map((r2, col) => {
                     let hand = row === col ? r1 + r2 : row < col ? r1 + r2 + 's' : r2 + r1 + 'o';
