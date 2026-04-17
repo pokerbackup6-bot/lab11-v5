@@ -364,7 +364,7 @@ export const BenefitsScreen: React.FC<BenefitsScreenProps> = ({ onBack, userId }
             Benefícios <span className="text-sky-400">Exclusivos</span>
           </h1>
           <p className="text-gray-600 text-[10px] font-bold tracking-widest uppercase mt-1">
-            Links afiliados, descontos e promoções para membros LAB11
+            Descontos e promoções para membros LAB11
           </p>
         </motion.div>
 
