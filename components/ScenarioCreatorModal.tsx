@@ -2003,24 +2003,75 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
             <div className="flex-1 flex flex-col md:flex-row gap-6 p-8 overflow-y-auto custom-scrollbar">
               {/* Left: inputs */}
               <div className="flex-1 space-y-6 min-w-0">
-                {/* Flop cards */}
+                {/* Flop cards - visual picker */}
                 <div className="space-y-3">
-                  <label className="text-[11px] text-emerald-400 font-black uppercase tracking-widest">Cartas do Flop</label>
-                  <div className="flex gap-3">
-                    {[0, 1, 2].map(i => (
-                      <input
-                        key={i}
-                        type="text"
-                        maxLength={3}
-                        value={quickBoard[i] || ''}
-                        onChange={(e) => {
-                          const nb = [...quickBoard];
-                          nb[i] = e.target.value;
-                          setQuickBoard(nb);
-                        }}
-                        placeholder="?"
-                        className="w-16 h-14 bg-black/60 border border-white/20 rounded-xl text-center text-white font-black text-lg outline-none focus:border-emerald-500/50 uppercase"
-                      />
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] text-emerald-400 font-black uppercase tracking-widest">Cartas do Flop</label>
+                    <div className="flex items-center gap-2">
+                      {quickBoard.filter(c => c.length === 2).length > 0 && (
+                        <div className="flex gap-1 items-center">
+                          {quickBoard.filter(c => c.length === 2).map((card, idx) => {
+                            const s = card[1].toLowerCase();
+                            const suitSymbol = s === 'h' ? '♥' : s === 'd' ? '♦' : s === 'c' ? '♣' : '♠';
+                            const suitColor = s === 'h' ? 'text-red-500' : s === 'd' ? 'text-blue-400' : s === 'c' ? 'text-green-500' : 'text-gray-300';
+                            return (
+                              <div key={idx} className="w-9 h-11 rounded-lg bg-white border border-white/20 flex flex-col items-center justify-center shadow-lg">
+                                <span className={`text-[11px] font-black leading-none text-gray-900`}>{card[0]}</span>
+                                <span className={`text-[10px] leading-none ${suitColor}`}>{suitSymbol}</span>
+                              </div>
+                            );
+                          })}
+                          {quickBoard.filter(c => c.length === 2).length < 3 && (
+                            <span className="text-[9px] text-gray-600 font-bold ml-1">+{3 - quickBoard.filter(c => c.length === 2).length}</span>
+                          )}
+                        </div>
+                      )}
+                      {quickBoard.some(c => c.length === 2) && (
+                        <button onClick={() => setQuickBoard(['', '', ''])} className="text-[9px] text-gray-600 hover:text-red-400 font-bold uppercase tracking-wider transition-colors">Limpar</button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    {([['s', '♠', 'text-gray-300', 'bg-gray-800/60'], ['h', '♥', 'text-red-500', 'bg-red-900/20'], ['d', '♦', 'text-blue-400', 'bg-blue-900/20'], ['c', '♣', 'text-green-500', 'bg-green-900/20']] as const).map(([suit, symbol, color, rowBg]) => (
+                      <div key={suit} className={`flex items-center gap-1 ${rowBg} rounded-lg px-2 py-1`}>
+                        <span className={`${color} text-sm w-5 text-center`}>{symbol}</span>
+                        <div className="flex gap-0.5 flex-1">
+                          {RANKS.map(rank => {
+                            const card = rank + suit;
+                            const isSelected = quickBoard.includes(card);
+                            const isUsedInVariant = variants.some(v => v.board.includes(card));
+                            const isFull = quickBoard.filter(c => c.length === 2).length >= 3;
+                            const disabled = !isSelected && (isFull || isUsedInVariant);
+                            return (
+                              <button
+                                key={card}
+                                disabled={disabled && !isSelected}
+                                onClick={() => {
+                                  if (isSelected) {
+                                    setQuickBoard(prev => prev.map(c => c === card ? '' : c));
+                                  } else {
+                                    setQuickBoard(prev => {
+                                      const next = [...prev];
+                                      const emptyIdx = next.findIndex(c => c === '');
+                                      if (emptyIdx !== -1) next[emptyIdx] = card;
+                                      return next;
+                                    });
+                                  }
+                                }}
+                                className={`flex-1 h-8 rounded text-[10px] font-black transition-all ${
+                                  isSelected
+                                    ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30 scale-105'
+                                    : disabled
+                                      ? 'bg-black/20 text-gray-700 cursor-not-allowed'
+                                      : 'bg-black/40 text-gray-400 hover:bg-white/10 hover:text-white'
+                                }`}
+                              >
+                                {rank}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>
