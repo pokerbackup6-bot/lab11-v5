@@ -334,12 +334,6 @@ const RangeMatrix: React.FC<RangeMatrixProps> = ({
             {/* Header */}
             <div className="flex items-center justify-between mb-2 border-b border-white/10 pb-1.5">
               <span className="text-white font-black text-[11px] uppercase tracking-widest">{hoveredHand}</span>
-              {cellVariance[hoveredHand] && (
-                <span className="flex items-center gap-1 text-amber-400 text-[8px] font-black uppercase tracking-wide">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                  variável
-                </span>
-              )}
             </div>
 
             {/* Frequências agregadas */}
