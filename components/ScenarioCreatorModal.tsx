@@ -982,17 +982,26 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     alert(`PioSolver: ${parsed} combos processados → ${applied} tipos de mão importados para "${selectedAction}".`);
   };
 
-  const onClearMatrixClick = useCallback((e: React.MouseEvent) => {
+  const onClearMatrixClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (window.confirm('Deseja limpar toda a matriz estratégica? Todas as mãos pintadas serão removidas.')) {
-      updateRangeData(() => ({}));
+      if (useOpponentRanges && editingRangeTarget === 'opponent') {
+        setOpponentRangeData({});
+      } else if (useOpponentRanges && editingRangeTarget !== 'hero' && editingRangeTarget !== 'opponent') {
+        setHeroRangesByActionData(prev => ({ ...prev, [editingRangeTarget]: {} }));
+      } else {
+        setRangeData({});
+        if (activeVariantId && street !== 'PREFLOP') {
+          setVariants(vPrev => vPrev.map(v => v.id === activeVariantId ? { ...v, ranges: {} } : v));
+        }
+      }
       setRangeText('');
       setSuitRangeText('');
       setGtoWizardText('');
       localStorage.removeItem(SCENARIO_DRAFT_KEY);
     }
-  }, [activeVariantId, street]);
+  };
 
   const buildScenarioObject = (publishState: boolean): Scenario => {
     const isPostFlop = street !== 'PREFLOP';
