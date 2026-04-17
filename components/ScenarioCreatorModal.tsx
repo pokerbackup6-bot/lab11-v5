@@ -982,25 +982,35 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     alert(`PioSolver: ${parsed} combos processados → ${applied} tipos de mão importados para "${selectedAction}".`);
   };
 
-  const onClearMatrixClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (window.confirm('Deseja limpar toda a matriz estratégica? Todas as mãos pintadas serão removidas.')) {
-      if (useOpponentRanges && editingRangeTarget === 'opponent') {
-        setOpponentRangeData({});
-      } else if (useOpponentRanges && editingRangeTarget !== 'hero' && editingRangeTarget !== 'opponent') {
-        setHeroRangesByActionData(prev => ({ ...prev, [editingRangeTarget]: {} }));
-      } else {
-        setRangeData({});
-        if (activeVariantId && street !== 'PREFLOP') {
-          setVariants(vPrev => vPrev.map(v => v.id === activeVariantId ? { ...v, ranges: {} } : v));
-        }
-      }
-      setRangeText('');
-      setSuitRangeText('');
-      setGtoWizardText('');
-      localStorage.removeItem(SCENARIO_DRAFT_KEY);
+  const [clearConfirmPending, setClearConfirmPending] = useState(false);
+  const clearConfirmTimer = useRef<number | null>(null);
+
+  const onClearMatrixClick = () => {
+    if (!clearConfirmPending) {
+      // Primeiro clique — pede confirmação (3s para clicar de novo)
+      setClearConfirmPending(true);
+      if (clearConfirmTimer.current) window.clearTimeout(clearConfirmTimer.current);
+      clearConfirmTimer.current = window.setTimeout(() => setClearConfirmPending(false), 3000);
+      return;
     }
+    // Segundo clique — limpa de verdade
+    setClearConfirmPending(false);
+    if (clearConfirmTimer.current) { window.clearTimeout(clearConfirmTimer.current); clearConfirmTimer.current = null; }
+
+    if (useOpponentRanges && editingRangeTarget === 'opponent') {
+      setOpponentRangeData({});
+    } else if (useOpponentRanges && editingRangeTarget !== 'hero' && editingRangeTarget !== 'opponent') {
+      setHeroRangesByActionData(prev => ({ ...prev, [editingRangeTarget]: {} }));
+    } else {
+      setRangeData({});
+      if (activeVariantId && street !== 'PREFLOP') {
+        setVariants(vPrev => vPrev.map(v => v.id === activeVariantId ? { ...v, ranges: {} } : v));
+      }
+    }
+    setRangeText('');
+    setSuitRangeText('');
+    setGtoWizardText('');
+    localStorage.removeItem(SCENARIO_DRAFT_KEY);
   };
 
   const buildScenarioObject = (publishState: boolean): Scenario => {
@@ -1738,9 +1748,9 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
               <button
                 type="button"
                 onClick={onClearMatrixClick}
-                className="w-full py-4 rounded-2xl bg-red-600/10 border border-red-500/20 text-red-500 text-[10px] font-black uppercase tracking-widest hover:bg-red-500/20 transition-all shadow-xl active:scale-95"
+                className={`w-full py-4 rounded-2xl border text-[10px] font-black uppercase tracking-widest transition-all shadow-xl active:scale-95 ${clearConfirmPending ? 'bg-red-600 border-red-400 text-white animate-pulse' : 'bg-red-600/10 border-red-500/20 text-red-500 hover:bg-red-500/20'}`}
               >
-                Limpar Matriz
+                {clearConfirmPending ? 'CLIQUE NOVAMENTE PARA CONFIRMAR' : 'Limpar Matriz'}
               </button>
             </div>
           </div>
