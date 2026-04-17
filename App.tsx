@@ -1136,7 +1136,7 @@ const App: React.FC = () => {
     // Salvar no banco (fire-and-forget)
     if (currentUserIdRef.current) {
       const scenarioUUID = activeScenario.id && isValidUUID(activeScenario.id) ? activeScenario.id : null;
-      supabase.from('hand_history').insert({
+      const handRow: Record<string, any> = {
         user_id:             currentUserIdRef.current,
         scenario_id:         scenarioUUID,
         scenario_name:       activeScenario.name ?? null,
@@ -1148,9 +1148,13 @@ const App: React.FC = () => {
         is_correct:          isCorrect,
         is_timeout:          isTimeout,
         correct_freq:        clickedFreq,
-        opponent_action:     currentOpponentAction || null,
-        opponent_hand_key:   currentOpponentHandKey || null,
-      }).then(({ error }) => {
+      };
+      // Só envia colunas de opponent ranges se tiver dados (migration v7)
+      if (currentOpponentAction) {
+        handRow.opponent_action = currentOpponentAction;
+        handRow.opponent_hand_key = currentOpponentHandKey || null;
+      }
+      supabase.from('hand_history').insert(handRow).then(({ error }) => {
         if (error) console.error('[hand_history] Erro ao salvar:', error.message);
       });
     }

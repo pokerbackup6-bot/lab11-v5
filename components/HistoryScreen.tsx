@@ -105,11 +105,17 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ currentUser, onBack }) =>
     const load = async () => {
       setLoading(true);
       try {
+        // Buscar user_id a partir do email
+        const { data: { session } } = await supabase.auth.getSession();
+        const userId = session?.user?.id;
+
         // Buscar do Supabase
-        const { data, error } = await supabase
+        let query = supabase
           .from('hand_history')
           .select('training_session_id, scenario_name, is_correct, is_timeout, user_action, correct_action, hero_cards, hand_key, played_at')
           .order('played_at', { ascending: true });
+        if (userId) query = query.eq('user_id', userId);
+        const { data, error } = await query;
 
         if (!error && data && data.length > 0) {
           // Agrupar por training_session_id
