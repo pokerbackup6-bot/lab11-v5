@@ -43,7 +43,7 @@ const getActionColor = (label: string, index: number): string => {
 const EMPTY_CELL_BG = '#0a0a0a';
 
 const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onClose, onSave, onDelete, onTogglePublish, scenarios = [], isAdmin = false }) => {
-  const [step, setStep] = useState<number | 'manage'>(1);
+  const [step, setStep] = useState<number | 'manage' | 'quick'>(1);
   const [isDragging, setIsDragging] = useState(false);
   
   const [currentId, setCurrentId] = useState<string>(`sc-${Date.now()}`);
@@ -154,6 +154,12 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [showBulkFlopImport, setShowBulkFlopImport] = useState(false);
   const [showBulkPreflopImport, setShowBulkPreflopImport] = useState(false);
+
+  // Quick Entry mode state
+  const [quickBoard, setQuickBoard] = useState<string[]>(['', '', '']);
+  const [quickActionTexts, setQuickActionTexts] = useState<Record<string, string>>({});
+  const [quickPreviewRange, setQuickPreviewRange] = useState<RangeData>({});
+
   const [pendingDuplicateImport, setPendingDuplicateImport] = useState<{
     unique: BoardVariant[];
     conflicts: Array<{ incoming: BoardVariant; existing: BoardVariant }>;
@@ -470,6 +476,93 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     } catch (e) {
       console.error('Erro na importação preflop:', e);
     }
+  };
+
+  // Quick Entry: parse all action textareas into a preview range
+  const parseQuickTexts = (texts: Record<string, string>): RangeData => {
+    const result: RangeData = {};
+    Object.entries(texts).forEach(([actionName, text]) => {
+      if (!text.trim()) return;
+      const parts = text.split(/[,;\n]+/).map(p => p.trim()).filter(p => p.length > 0);
+      parts.forEach(part => {
+        const subParts = part.split(/[:=]/).map(s => s.trim());
+        let combo = '', freq = 100;
+        if (subParts.length >= 2) {
+          combo = subParts[0]; freq = parseFloat(subParts[1]);
+          if (isNaN(freq)) return;
+          if (freq <= 1.0 && freq > 0) freq *= 100;
+        } else {
+          combo = subParts[0];
+        }
+        combo = combo.toUpperCase().replace(/10/g, 'T');
+        if (combo.length === 4) {
+          combo = combo[0] + combo[1].toLowerCase() + combo[2] + combo[3].toLowerCase();
+        } else if (combo.length === 3) {
+          combo = combo.slice(0, 2) + combo[2].toLowerCase();
+        } else if (combo.length === 2 && combo[0] !== combo[1]) {
+          combo = combo + 'o';
+        }
+        if (combo.length >= 2 && combo.length <= 5) {
+          if (!result[combo]) result[combo] = {};
+          result[combo][actionName] = Math.min(100, (result[combo][actionName] || 0) + freq);
+        }
+      });
+    });
+    return result;
+  };
+
+  const handleQuickActionTextChange = (actionName: string, text: string) => {
+    const next = { ...quickActionTexts, [actionName]: text };
+    setQuickActionTexts(next);
+    setQuickPreviewRange(parseQuickTexts(next));
+  };
+
+  const handleQuickSaveFlop = () => {
+    const boardCards = quickBoard.map(c => c.trim().toUpperCase().replace(/10/g, 'T')).map(c => {
+      if (c.length === 2) return c[0] + c[1].toLowerCase();
+      return c;
+    });
+    if (boardCards.filter(c => c.length === 2).length < 3) return; // Precisa de 3 cartas válidas
+
+    const ranges = parseQuickTexts(quickActionTexts);
+    if (Object.keys(ranges).length === 0) return;
+
+    const actionsUsed = [...new Set(Object.values(ranges).flatMap(f => Object.keys(f)))];
+
+    // Add as variant
+    const newId = `v-${Date.now()}`;
+    const flopStr = [...boardCards].sort().join('');
+    const isDuplicate = variants.some(v => [...v.board].sort().join('') === flopStr);
+    const newVariant: BoardVariant = {
+      id: newId,
+      board: boardCards,
+      ranges,
+      customActions: actionsUsed.length > 0 ? actionsUsed : customActions,
+      isDuplicate,
+    };
+    setVariants(prev => [...prev, newVariant]);
+
+    // Update customActions if new actions found
+    const merged = new Set([...customActions, ...actionsUsed]);
+    if (merged.size > customActions.length) setCustomActions([...merged]);
+
+    // Reset quick entry for next flop
+    setQuickBoard(['', '', '']);
+    setQuickActionTexts({});
+    setQuickPreviewRange({});
+  };
+
+  const handleQuickPublishAll = () => {
+    if (variants.length === 0) return;
+    // Use first variant's data as the main scenario range
+    const first = variants[0];
+    setRangeData(first.ranges);
+    setBoard(first.board);
+    setActiveVariantId(first.id);
+
+    const scenario = buildScenarioObject(true);
+    if (onSave) onSave(scenario, true);
+    resetForm();
   };
 
   // Autosave timer effect
@@ -1198,17 +1291,17 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
 
   return (
     <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-black/98 backdrop-blur-2xl animate-in fade-in duration-300">
-      <div className={`bg-[#080808] w-full ${step === 2 ? 'max-w-[1250px]' : 'max-w-4xl'} border border-white/10 rounded-[40px] shadow-2xl flex flex-col max-h-[95vh] overflow-hidden transition-all duration-500`}>
+      <div className={`bg-[#080808] w-full ${step === 2 || step === 'quick' ? 'max-w-[1250px]' : 'max-w-4xl'} border border-white/10 rounded-[40px] shadow-2xl flex flex-col max-h-[95vh] overflow-hidden transition-all duration-500`}>
         
-        <div className={`px-10 py-8 border-b border-white/5 flex justify-between items-center ${step === 2 ? 'bg-sky-500/5' : 'bg-emerald-500/5'}`}>
+        <div className={`px-10 py-8 border-b border-white/5 flex justify-between items-center ${step === 2 || step === 'quick' ? 'bg-sky-500/5' : 'bg-emerald-500/5'}`}>
           <div className="flex items-center gap-6">
-            <div className={`w-14 h-14 ${step === 'manage' ? 'bg-gray-700' : step === 1 ? 'bg-emerald-600' : 'bg-sky-600'} rounded-2xl flex items-center justify-center shadow-2xl`}>
+            <div className={`w-14 h-14 ${step === 'manage' ? 'bg-gray-700' : step === 'quick' ? 'bg-emerald-600' : step === 1 ? 'bg-emerald-600' : 'bg-sky-600'} rounded-2xl flex items-center justify-center shadow-2xl`}>
                {step === 1 ? <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><path d="M12 4v16m8-8H4" /></svg> : <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><path d="M9 17l-5-5 5-5m11 5H4" /></svg>}
             </div>
             <div>
-              <h2 className="text-3xl font-black text-white tracking-tighter uppercase leading-none mb-1">{step === 'manage' ? 'GERENCIAR' : step === 1 ? 'CRIADOR' : 'MATRIZ GTO'}</h2>
+              <h2 className="text-3xl font-black text-white tracking-tighter uppercase leading-none mb-1">{step === 'manage' ? 'GERENCIAR' : step === 'quick' ? 'ENTRADA RÁPIDA' : step === 1 ? 'CRIADOR' : 'MATRIZ GTO'}</h2>
               <div className="flex items-center gap-3">
-                <p className={`text-[11px] font-black tracking-[0.3em] uppercase ${step === 1 ? 'text-emerald-500' : 'text-sky-500'}`}>{step === 1 ? 'Etapa 1: Mesa e Spot' : 'Etapa 2: Range Estratégico'}</p>
+                <p className={`text-[11px] font-black tracking-[0.3em] uppercase ${step === 1 ? 'text-emerald-500' : step === 'quick' ? 'text-emerald-500' : 'text-sky-500'}`}>{step === 1 ? 'Etapa 1: Mesa e Spot' : step === 'quick' ? 'Flop a flop · Rápido e Eficiente' : 'Etapa 2: Range Estratégico'}</p>
                 {lastAutosave && <span className="text-[9px] text-gray-600 font-bold uppercase tracking-widest italic animate-pulse">Autosave: {lastAutosave.toLocaleTimeString()}</span>}
               </div>
             </div>
@@ -1877,17 +1970,155 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
           </div>
         )}
 
+        {/* Quick Entry Mode */}
+        {step === 'quick' && (
+          <div className="flex-1 flex overflow-hidden animate-in fade-in duration-500">
+            {/* Sidebar: flops salvos */}
+            <div className="w-56 border-r border-white/5 flex flex-col bg-black/20 shrink-0">
+              <div className="p-4 border-b border-white/5 bg-white/5">
+                <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Flops Salvos</span>
+                <span className="ml-2 text-[10px] font-black text-emerald-400">{variants.length}</span>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1.5">
+                {variants.length === 0 && (
+                  <p className="p-3 text-[9px] text-gray-600 font-bold uppercase text-center">Nenhum flop ainda</p>
+                )}
+                {variants.map((v, idx) => (
+                  <div key={v.id} className="p-2.5 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] font-black text-gray-500">#{idx + 1}</span>
+                      <div className="flex gap-0.5">
+                        {v.board.map((card, ci) => (
+                          <span key={ci} className="text-[10px] font-black text-white bg-black/40 px-1 py-0.5 rounded">{card || '?'}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <span className="text-[8px] text-gray-500 font-bold">{Object.keys(v.ranges).length}h</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Main area */}
+            <div className="flex-1 flex flex-col md:flex-row gap-6 p-8 overflow-y-auto custom-scrollbar">
+              {/* Left: inputs */}
+              <div className="flex-1 space-y-6 min-w-0">
+                {/* Flop cards */}
+                <div className="space-y-3">
+                  <label className="text-[11px] text-emerald-400 font-black uppercase tracking-widest">Cartas do Flop</label>
+                  <div className="flex gap-3">
+                    {[0, 1, 2].map(i => (
+                      <input
+                        key={i}
+                        type="text"
+                        maxLength={3}
+                        value={quickBoard[i] || ''}
+                        onChange={(e) => {
+                          const nb = [...quickBoard];
+                          nb[i] = e.target.value;
+                          setQuickBoard(nb);
+                        }}
+                        placeholder="?"
+                        className="w-16 h-14 bg-black/60 border border-white/20 rounded-xl text-center text-white font-black text-lg outline-none focus:border-emerald-500/50 uppercase"
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Action textareas */}
+                <div className="space-y-4">
+                  <label className="text-[11px] text-sky-400 font-black uppercase tracking-widest">Ranges por Ação</label>
+                  {customActions.length === 0 && (
+                    <p className="text-[9px] text-gray-500 font-bold">Configure as ações do herói na Etapa 1 primeiro.</p>
+                  )}
+                  {customActions.map((act, idx) => (
+                    <div key={act} className="space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: getActionColor(act, idx) }}></div>
+                        <span className="text-[10px] font-black text-white uppercase tracking-wider">{act}</span>
+                      </div>
+                      <textarea
+                        value={quickActionTexts[act] || ''}
+                        onChange={(e) => handleQuickActionTextChange(act, e.target.value)}
+                        placeholder={`Cole o range de ${act} (ex: AA: 100, AKs: 85, QQ: 50)`}
+                        className="w-full h-20 bg-black/40 border border-white/10 rounded-xl py-2 px-4 text-white text-[10px] font-mono outline-none focus:border-sky-500/50 resize-none custom-scrollbar"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Right: mini preview matrix */}
+              <div className="w-[280px] shrink-0 flex flex-col gap-4">
+                <label className="text-[10px] text-gray-500 font-black uppercase tracking-widest text-center">Preview</label>
+                <div className="grid grid-cols-13 gap-0 aspect-square w-full rounded-lg overflow-hidden bg-[#0a0a0a]">
+                  {RANKS.map((r1, row) => RANKS.map((r2, col) => {
+                    const hand = row === col ? r1 + r2 : row < col ? r1 + r2 + 's' : r2 + r1 + 'o';
+                    const freqs = quickPreviewRange[hand];
+                    let bg = EMPTY_CELL_BG;
+                    if (freqs) {
+                      const entries = Object.entries(freqs) as [string, number][];
+                      const total = entries.reduce((s, [, f]) => s + f, 0);
+                      if (total > 0) {
+                        // Use dominant action color
+                        entries.sort((a, b) => b[1] - a[1]);
+                        const topAction = entries[0][0];
+                        const idx = customActions.indexOf(topAction);
+                        bg = getActionColor(topAction, idx !== -1 ? idx : 0);
+                      }
+                    }
+                    return (
+                      <div
+                        key={hand}
+                        style={{ backgroundColor: bg }}
+                        className="flex items-center justify-center text-[5px] font-bold text-white/60 select-none aspect-square"
+                      >
+                        {hand.replace(/[so]$/, '')}
+                      </div>
+                    );
+                  }))}
+                </div>
+                <div className="text-[9px] text-gray-500 font-bold text-center">
+                  {Object.keys(quickPreviewRange).length} mãos detectadas
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="px-12 py-10 border-t border-white/5 bg-black/50 flex gap-6 shrink-0">
-          <button type="button" onClick={() => step === 2 || step === 'manage' ? setStep(1) : onClose()} className="flex-1 py-6 rounded-[24px] border border-white/10 text-[12px] font-black uppercase tracking-[0.3em] text-gray-500 hover:text-white transition-all">{step === 1 ? 'CANCELAR' : 'RETORNAR'}</button>
+          <button type="button" onClick={() => step === 2 || step === 'manage' || step === 'quick' ? setStep(1) : onClose()} className="flex-1 py-6 rounded-[24px] border border-white/10 text-[12px] font-black uppercase tracking-[0.3em] text-gray-500 hover:text-white transition-all">{step === 1 ? 'CANCELAR' : 'RETORNAR'}</button>
           {step !== 'manage' && step === 1 && (
-            <button type="button" onClick={() => {
-              if (street !== 'PREFLOP' && variants.length === 0) {
-                addVariant(board, rangeData, customActions);
-              }
-              setStep(2);
-            }} className="flex-[1.5] py-6 rounded-[24px] border text-[12px] font-black uppercase tracking-[0.3em] text-white shadow-2xl transition-all flex items-center justify-center gap-4 bg-emerald-600 border-emerald-400">
-              CONFIGURAR MATRIZ GTO
-            </button>
+            <>
+              {street !== 'PREFLOP' && (
+                <button type="button" onClick={() => {
+                  setQuickBoard(['', '', '']);
+                  setQuickActionTexts({});
+                  setQuickPreviewRange({});
+                  setStep('quick');
+                }} className="flex-1 py-6 rounded-[24px] border border-emerald-500/30 bg-emerald-600/20 text-[12px] font-black uppercase tracking-[0.3em] text-emerald-400 hover:bg-emerald-600/30 transition-all flex items-center justify-center gap-3">
+                  ENTRADA RÁPIDA
+                </button>
+              )}
+              <button type="button" onClick={() => {
+                if (street !== 'PREFLOP' && variants.length === 0) {
+                  addVariant(board, rangeData, customActions);
+                }
+                setStep(2);
+              }} className="flex-[1.2] py-6 rounded-[24px] border text-[12px] font-black uppercase tracking-[0.3em] text-white shadow-2xl transition-all flex items-center justify-center gap-4 bg-emerald-600 border-emerald-400">
+                CONFIGURAR MATRIZ GTO
+              </button>
+            </>
+          )}
+          {step === 'quick' && (
+            <>
+              <button type="button" onClick={handleQuickSaveFlop} disabled={quickBoard.filter(c => c.trim().length >= 2).length < 3 || Object.keys(quickPreviewRange).length === 0} className="flex-1 py-6 rounded-[24px] border border-emerald-500/30 bg-emerald-600 text-[12px] font-black uppercase tracking-[0.3em] text-white shadow-2xl transition-all flex items-center justify-center gap-3 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed">
+                SALVAR FLOP E PRÓXIMO
+              </button>
+              <button type="button" onClick={handleQuickPublishAll} disabled={variants.length === 0} className="flex-1 py-6 rounded-[24px] border border-sky-400 bg-sky-600 text-[12px] font-black uppercase tracking-[0.3em] text-white shadow-2xl transition-all flex items-center justify-center gap-3 hover:bg-sky-500 disabled:opacity-30 disabled:cursor-not-allowed">
+                PUBLICAR ({variants.length} FLOPS)
+              </button>
+            </>
           )}
           {step !== 'manage' && step === 2 && (
             <>
