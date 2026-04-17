@@ -30,7 +30,7 @@ const getActionColor = (label: string, index: number): string => {
   const l = label.toLowerCase();
   
   // Cores fixas para ações universais (Independente do índice)
-  if (l.includes('fold')) return '#334155'; // Cinza escuro
+  if (l.includes('fold')) return '#475569'; // Cinza slate
   if (l.includes('check')) return '#0ea5e9'; // Azul claro/Sky
   if (l.includes('call') || l.includes('pagar') || l === 'limp') return '#2563eb'; // Azul forte
   
@@ -40,7 +40,7 @@ const getActionColor = (label: string, index: number): string => {
   return CUSTOM_PALETTE[Math.max(0, index) % CUSTOM_PALETTE.length];
 };
 
-const EMPTY_CELL_BG = '#111111'; 
+const EMPTY_CELL_BG = '#0a0a0a';
 
 const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onClose, onSave, onDelete, onTogglePublish, scenarios = [], isAdmin = false }) => {
   const [step, setStep] = useState<number | 'manage'>(1);
@@ -1727,7 +1727,7 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
                   </span>
                 </div>
               )}
-              <div onContextMenu={(e) => e.preventDefault()} className="grid grid-cols-13 gap-0 aspect-square w-full max-w-[650px] shadow-2xl overflow-hidden rounded-lg bg-[#111]">
+              <div onContextMenu={(e) => e.preventDefault()} className="grid grid-cols-13 gap-0 aspect-square w-full max-w-[650px] shadow-2xl overflow-hidden rounded-lg bg-[#0a0a0a]">
                 {RANKS.map((r1, row) => RANKS.map((r2, col) => {
                     let hand = row === col ? r1 + r2 : row < col ? r1 + r2 + 's' : r2 + r1 + 'o';
                     return (
