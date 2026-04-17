@@ -27,7 +27,8 @@ import {
   Trophy,
   UserCircle,
   Home,
-  BookOpen
+  BookOpen,
+  Star
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
