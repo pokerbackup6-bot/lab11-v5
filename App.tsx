@@ -139,30 +139,36 @@ const createBulkSnapshot = async (
   return !error;
 };
 
-const scenarioToDb = (s: Scenario, isDefault = false) => ({
-  name: s.name,
-  description: s.description ?? null,
-  video_link: s.videoLink ?? null,
-  modality: s.modality,
-  street: s.street,
-  preflop_action: s.preflopAction ?? '',
-  player_count: s.playerCount,
-  hero_pos: s.heroPos,
-  opponents: s.opponents ?? [],
-  stack_bb: s.stackBB,
-  hero_bet_size: s.heroBetSize,
-  opponent_bet_size: s.opponentBetSize ?? null,
-  initial_pot_bb: s.initialPotBB ?? null,
-  opponent_action: s.opponentAction ?? null,
-  board: s.board ?? [],
-  ranges: s.ranges ?? {},
-  custom_actions: s.customActions ?? [],
-  is_system_default: isDefault,
-  is_published: s.isPublished ?? true,
-  opponent_ranges: s.opponentRanges ?? null,
-  opponent_actions: s.opponentActions ?? [],
-  hero_ranges_by_action: s.heroRangesByAction ?? null,
-});
+const scenarioToDb = (s: Scenario, isDefault = false) => {
+  const base: Record<string, any> = {
+    name: s.name,
+    description: s.description ?? null,
+    video_link: s.videoLink ?? null,
+    modality: s.modality,
+    street: s.street,
+    preflop_action: s.preflopAction ?? '',
+    player_count: s.playerCount,
+    hero_pos: s.heroPos,
+    opponents: s.opponents ?? [],
+    stack_bb: s.stackBB,
+    hero_bet_size: s.heroBetSize,
+    opponent_bet_size: s.opponentBetSize ?? null,
+    initial_pot_bb: s.initialPotBB ?? null,
+    opponent_action: s.opponentAction ?? null,
+    board: s.board ?? [],
+    ranges: s.ranges ?? {},
+    custom_actions: s.customActions ?? [],
+    is_system_default: isDefault,
+    is_published: s.isPublished ?? true,
+  };
+  // Só envia colunas de opponent ranges se a migration v7 já foi aplicada (dados existem)
+  if (s.opponentRanges && Object.keys(s.opponentRanges).length > 0) {
+    base.opponent_ranges = s.opponentRanges;
+    base.opponent_actions = s.opponentActions ?? [];
+    base.hero_ranges_by_action = s.heroRangesByAction ?? null;
+  }
+  return base;
+};
 
 const dbToScenario = (row: any): Scenario => ({
   id: row.id,

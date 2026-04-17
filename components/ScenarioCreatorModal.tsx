@@ -150,8 +150,10 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
   const [pioSolverText, setPioSolverText] = useState('');
   const [bulkImportText, setBulkImportText] = useState('');
   const [bulkFlopText, setBulkFlopText] = useState('');
+  const [bulkPreflopText, setBulkPreflopText] = useState('');
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [showBulkFlopImport, setShowBulkFlopImport] = useState(false);
+  const [showBulkPreflopImport, setShowBulkPreflopImport] = useState(false);
   const [pendingDuplicateImport, setPendingDuplicateImport] = useState<{
     unique: BoardVariant[];
     conflicts: Array<{ incoming: BoardVariant; existing: BoardVariant }>;
@@ -315,7 +317,6 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
           setRangeData(first.ranges);
           setCustomActions(first.customActions || ['Fold', 'Call', 'Raise']);
         }
-        alert(`${uniqueVariants.length} cenários de flop importados com sucesso!`);
         setBulkFlopText('');
         setShowBulkFlopImport(false);
       }
@@ -360,7 +361,7 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     }
 
     const total = choice === 'skip' ? unique.length : unique.length + conflicts.length;
-    alert(`${total} cenários importados com sucesso!`);
+    // importação concluída
     setPendingDuplicateImport(null);
     setBulkFlopText('');
     setShowBulkFlopImport(false);
@@ -382,13 +383,92 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
         }
       });
       
-      alert(`${scenariosToImport.length} cenários importados com sucesso!`);
+      // importação concluída
       setBulkImportText('');
       setShowBulkImport(false);
       setStep('manage');
     } catch (e) {
       alert('Erro ao importar JSON. Verifique o formato.');
       console.error(e);
+    }
+  };
+
+  // Importação em massa de range preflop por texto
+  const handleBulkPreflopImport = () => {
+    if (!bulkPreflopText.trim()) return;
+
+    try {
+      const rawBlocks = bulkPreflopText.split('---');
+      // Primeiro bloco pode ser título/descrição — ignorado se não tiver ":"
+      const newRangeData: RangeData = {};
+      const newActions: string[] = [];
+      let currentAction = '';
+
+      rawBlocks.forEach(block => {
+        const lines = block.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        if (lines.length === 0) return;
+
+        lines.forEach(line => {
+          // Detectar header de ação (ex: "AÇÃO: FOLD" ou "FOLD" ou "RAISE 2.5")
+          const actionMatch = line.match(/^(?:AÇÃO|ACAO|ACTION):\s*(.+)$/i);
+          if (actionMatch) {
+            currentAction = actionMatch[1].trim();
+            if (currentAction && !newActions.includes(currentAction)) newActions.push(currentAction);
+            return;
+          }
+
+          // Se a linha tem ":" provavelmente é combo: freq
+          if (line.includes(':')) {
+            const parts = line.split(',').map(p => p.trim()).filter(p => p.length > 0);
+            parts.forEach(part => {
+              if (!part.includes(':')) return;
+              const [combo, freqStr] = part.split(':').map(s => s.trim());
+              if (!combo || !freqStr) return;
+              let freq = parseFloat(freqStr);
+              if (isNaN(freq)) return;
+              if (freq <= 1.0 && freq > 0) freq *= 100;
+
+              // Normalizar combo
+              let normalized = combo.trim().toUpperCase().replace(/10/g, 'T');
+              if (normalized.length === 4) {
+                normalized = normalized[0] + normalized[1].toLowerCase() + normalized[2] + normalized[3].toLowerCase();
+              } else if (normalized.length === 3) {
+                normalized = normalized.slice(0, 2) + normalized[2].toLowerCase();
+              } else if (normalized.length === 2 && normalized[0] !== normalized[1]) {
+                normalized = normalized + 'o';
+              }
+
+              if (currentAction) {
+                if (!newRangeData[normalized]) newRangeData[normalized] = {};
+                newRangeData[normalized][currentAction] = Math.min(100, (newRangeData[normalized][currentAction] || 0) + freq);
+              }
+            });
+          } else {
+            // Linha sem ":" pode ser um header de ação simples (ex: "FOLD", "RAISE 2.5")
+            const normalizedLine = line.replace(/10/g, 'T');
+            const isCombo = /^[2-9TJQKA]{2}[so]?$/i.test(normalizedLine);
+            if (!isCombo && line.length >= 2 && !/^\d/.test(line)) {
+              currentAction = line;
+              if (!newActions.includes(currentAction)) newActions.push(currentAction);
+            }
+          }
+        });
+      });
+
+      if (Object.keys(newRangeData).length > 0) {
+        if (newActions.length > 0) setCustomActions(newActions);
+        updateRangeData(prev => {
+          const merged = { ...prev };
+          Object.entries(newRangeData).forEach(([hand, freqs]) => {
+            merged[hand] = { ...(merged[hand] || {}), ...freqs };
+          });
+          return merged;
+        });
+        setBulkPreflopText('');
+        setShowBulkPreflopImport(false);
+      }
+    } catch (e) {
+      console.error('Erro na importação preflop:', e);
     }
   };
 
@@ -905,7 +985,7 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
       }
       updateRangeData(() => newRangeData);
       setGtoWizardText('');
-      alert(`${addedCount} combos importados com sucesso.`);
+      // importação concluída
     } else {
       alert("Nenhum combo válido encontrado. Verifique se selecionou uma ação ou se o texto contém cabeçalhos.");
     }
@@ -979,7 +1059,7 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
 
     updateRangeData(() => newRangeData);
     setPioSolverText('');
-    alert(`PioSolver: ${parsed} combos processados → ${applied} tipos de mão importados para "${selectedAction}".`);
+    // importação PioSolver concluída
   };
 
   const [clearConfirmPending, setClearConfirmPending] = useState(false);
@@ -1744,6 +1824,33 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
                         Importar PioSolver
                       </button>
                     </div>
+                  </div>
+                  {/* Importação Preflop em Massa */}
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowBulkPreflopImport(!showBulkPreflopImport)}
+                      className={`w-full py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${showBulkPreflopImport ? 'bg-emerald-600 text-white' : 'bg-emerald-600/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-600/20'}`}
+                    >
+                      {showBulkPreflopImport ? 'Fechar' : 'Importar Texto em Massa'}
+                    </button>
+                    {showBulkPreflopImport && (
+                      <div className="flex flex-col gap-2 animate-in slide-in-from-top-2 duration-200">
+                        <textarea
+                          value={bulkPreflopText}
+                          onChange={(e) => setBulkPreflopText(e.target.value)}
+                          placeholder={"Título (ignorado)\nAÇÃO: FOLD\nAA: 0, AKs: 0\n---\nAÇÃO: RAISE\nAA: 100, AKs: 100\n---"}
+                          className="w-full h-40 bg-black/40 border border-white/10 rounded-xl py-2 px-4 text-white text-[10px] font-mono outline-none focus:border-emerald-500/50 resize-none custom-scrollbar"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleBulkPreflopImport}
+                          className="w-full bg-emerald-600 py-2 rounded-xl text-white text-[10px] font-black uppercase shadow-lg hover:bg-emerald-500 active:scale-95 transition-all"
+                        >
+                          Processar
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </section>
