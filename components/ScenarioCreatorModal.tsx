@@ -2039,9 +2039,8 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
                           {RANKS.map(rank => {
                             const card = rank + suit;
                             const isSelected = quickBoard.includes(card);
-                            const isUsedInVariant = variants.some(v => v.board.includes(card));
                             const isFull = quickBoard.filter(c => c.length === 2).length >= 3;
-                            const disabled = !isSelected && (isFull || isUsedInVariant);
+                            const disabled = !isSelected && isFull;
                             return (
                               <button
                                 key={card}
