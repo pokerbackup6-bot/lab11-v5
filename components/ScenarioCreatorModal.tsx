@@ -533,6 +533,13 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
     const newId = `v-${Date.now()}`;
     const flopStr = [...boardCards].sort().join('');
     const isDuplicate = variants.some(v => [...v.board].sort().join('') === flopStr);
+    if (isDuplicate) {
+      const ok = window.confirm('Este flop já existe nos flops salvos.\n\nDeseja continuar e adicionar mesmo assim?\n\nOK = Continuar · Cancelar = Limpar e escolher outro');
+      if (!ok) {
+        setQuickBoard(['', '', '']);
+        return;
+      }
+    }
     const newVariant: BoardVariant = {
       id: newId,
       board: boardCards,
@@ -2031,6 +2038,30 @@ const ScenarioCreatorModal: React.FC<ScenarioCreatorModalProps> = ({ isOpen, onC
                       )}
                     </div>
                   </div>
+                  {(() => {
+                    const filled = quickBoard.filter(c => c.length === 2);
+                    if (filled.length !== 3) return null;
+                    const key = [...filled].sort().join('');
+                    const dupIdx = variants.findIndex(v => [...v.board].sort().join('') === key);
+                    if (dupIdx === -1) return null;
+                    return (
+                      <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-amber-500/40 bg-amber-500/10">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-amber-400 text-[14px] leading-none">⚠</span>
+                          <span className="text-[10px] font-black uppercase tracking-wider text-amber-300 truncate">
+                            Flop duplicado · já salvo como #{dupIdx + 1}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setQuickBoard(['', '', ''])}
+                          className="shrink-0 text-[9px] font-black uppercase tracking-wider text-amber-200 hover:text-white px-2 py-1 rounded-md border border-amber-400/40 hover:bg-amber-500/20 transition-colors"
+                        >
+                          Limpar
+                        </button>
+                      </div>
+                    );
+                  })()}
                   <div className="space-y-1">
                     {([['s', '♠', 'text-gray-300', 'bg-gray-800/60'], ['h', '♥', 'text-red-500', 'bg-red-900/20'], ['d', '♦', 'text-blue-400', 'bg-blue-900/20'], ['c', '♣', 'text-green-500', 'bg-green-900/20']] as const).map(([suit, symbol, color, rowBg]) => (
                       <div key={suit} className={`flex items-center gap-1 ${rowBg} rounded-lg px-2 py-1`}>
