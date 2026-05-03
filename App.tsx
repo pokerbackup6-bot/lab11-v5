@@ -2305,11 +2305,18 @@ const App: React.FC = () => {
   // Force password change gate
   if (mustChangePassword) {
     return <ForceChangePassword
-      onChanged={() => {
-        setMustChangePassword(false);
+      onChanged={async () => {
         if (currentUserIdRef.current) {
-          supabaseAdmin.from('profiles').update({ must_change_password: false }).eq('id', currentUserIdRef.current);
+          const { error } = await supabaseAdmin
+            .from('profiles')
+            .update({ must_change_password: false })
+            .eq('id', currentUserIdRef.current);
+          if (error) {
+            console.error('Falha ao limpar must_change_password:', error);
+            return;
+          }
         }
+        setMustChangePassword(false);
       }}
       onLogout={handleLogout}
     />;
